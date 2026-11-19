@@ -1,16 +1,15 @@
 /**
- * @fileoverview 官方配额桶归一化、周期窗口识别与多模型池（Gemini / Argon / Carbon / Claude & GPT）构建。
+ * @fileoverview Gemini / Argon / Carbon / Claude & GPT 
  *
- * 处理所有已知的 Antigravity 服务端配额形态：
- * - Google AI Ultra：Argon / Carbon 与 Flash 共享同一个 Gemini Models 配额池；
- * - Google AI Pro（形态 1）：`RetrieveUserQuotaSummary` 返回独立的 `Gemini 4 Argon` / `Gemini 4 Carbon` 组；
- * - Google AI Pro（形态 2）：`Gemini Models` 组内嵌套独立的 `argon-weekly` / `carbon-weekly` 桶；
- * - Google AI Pro（形态 3）：`GetUserStatus` 的 `clientModelConfigs.quotaInfo` 为 Argon / Carbon 报告了与标准 Gemini 不同的独立剩余比例；
- * - Proto3 零值省略兼容：当配额耗尽（`remainingFraction === 0`）导致字段被省略且存在尚未过期的有效 `resetTime` 时，正确识别为 0% 剩余（100% 已用）。
+ * Antigravity 
+ * - Google AI Ultra Argon / Carbon Flash Gemini Models 
+ * - Google AI Pro 1 `RetrieveUserQuotaSummary` `Gemini 4 Argon` / `Gemini 4 Carbon` 
+ * - Google AI Pro 2 `Gemini Models` `argon-weekly` / `carbon-weekly` 
+ * - Google AI Pro 3 `GetUserStatus` `clientModelConfigs.quotaInfo` Argon / Carbon Gemini 
+ * - Proto3 `remainingFraction === 0` `resetTime` 0% 100% 
  */
 
-import { parseIsoMs } from '../trajectory-metrics.mjs';
-import { THIRD_PARTY_POOL_RE } from '../shared/telemetry-display-rules.mjs';
+import { parseIsoMs } from '../speed-metrics.mjs';
 import {
   isArgonModelIdentifier,
   isCarbonModelIdentifier,
@@ -18,17 +17,17 @@ import {
 } from './model-pricing.mjs';
 
 /**
- * 将原始配额对象（来自 `RetrieveUserQuotaSummary` 桶或 `clientModelConfigs.quotaInfo`）归一化为百分比结构。
+ * `RetrieveUserQuotaSummary` `clientModelConfigs.quotaInfo` 
  *
  * @param {object} rawObj
  * @param {number} [nowMs=Date.now()]
  * @returns {{
- *   remainingFraction: number,
- *   remainingPct: number,
- *   remainingIntPct: number,
- *   usedPct: number,
- *   resetTime: string|null,
- *   description: string
+ * remainingFraction: number,
+ * remainingPct: number,
+ * remainingIntPct: number,
+ * usedPct: number,
+ * resetTime: string|null,
+ * description: string
  * } | null}
  */
 function normalizeQuotaFraction(rawObj, nowMs = Date.now()) {
@@ -43,7 +42,7 @@ function normalizeQuotaFraction(rawObj, nowMs = Date.now()) {
   ) {
     remFrac = Math.max(0, Math.min(1, Number(rawObj.remainingFraction)));
   } else if (typeof rawObj.resetTime === 'string' && rawObj.resetTime.trim().length > 0) {
-    // Proto3 在配额完全耗尽（0.0）时会省略默认数值字段；仅当 resetTime 是未来有效时间戳时才判定为 0% 剩余
+    // Proto3 0.0 resetTime 0%
     const resetMs = parseIsoMs(rawObj.resetTime);
     if (resetMs > nowMs) {
       remFrac = 0;
@@ -53,20 +52,20 @@ function normalizeQuotaFraction(rawObj, nowMs = Date.now()) {
   const usedFrac = Math.max(0, Math.min(1, 1 - remFrac));
   return {
     remainingFraction: remFrac,
-    remainingPct: +(remFrac * 100).toFixed(1),
+    remainingPct: +(remFrac * 100).toFixed(2),
     remainingIntPct: Math.floor(remFrac * 100 + 1e-6),
-    usedPct: +(usedFrac * 100).toFixed(1),
+    usedPct: +(usedFrac * 100).toFixed(2),
     resetTime: rawObj.resetTime || null,
     description: rawObj.description || '',
   };
 }
 
 /**
- * 识别官方配额桶所属的时间窗口类型（`'5h'` 或 `'weekly'`）。
+ * `'5h'` `'weekly'` 
  *
  * @param {object} bucket
- * @param {number} [_groupBucketCount=1] 所属分组内的桶总数（保留参数签名兼容）
- * @param {number} [nowMs=Date.now()] 当前毫秒时间戳
+ * @param {number} [_groupBucketCount=1] 
+ * @param {number} [nowMs=Date.now()] 
  * @returns {'5h'|'weekly'}
  */
 function classifyOfficialBucketWindow(bucket, _groupBucketCount = 1, nowMs = Date.now()) {
@@ -91,9 +90,12 @@ function classifyOfficialBucketWindow(bucket, _groupBucketCount = 1, nowMs = Dat
   return 'weekly';
 }
 
+const THIRD_PARTY_POOL_RE =
+  /3p|claude|anthropic|fable|gpt|openai|oss|sonnet|opus|haiku|third[-_\s]?party/i;
+
 /**
- * 根据分组名称、分组描述及桶 ID 识别配额池归属身份（`Gemini` / `Argon` / `Carbon` / `Claude & GPT`）。
- * 优先识别显式的第三方模型池标识，防止分组描述附带 `"separate from Gemini"` 时把第三方池误吞入 Gemini。
+ * ID `Gemini` / `Argon` / `Carbon` / `Claude & GPT` 
+ * `"separate from Gemini"` Gemini 
  *
  * @param {{ groupName?: string, groupDesc?: string, bucketId?: string, bucketName?: string }} params
  * @returns {{ poolKey: string, poolLabel: string, poolName: string }}
@@ -121,7 +123,7 @@ function classifyQuotaPoolIdentity({
     return {
       poolKey: 'Carbon',
       poolLabel: 'Gemini 4 Carbon',
-      poolName: 'Gemini 4 Carbon 模型池',
+      poolName: 'Gemini 4 Carbon Pool',
     };
   }
   if (
@@ -135,7 +137,7 @@ function classifyQuotaPoolIdentity({
     return {
       poolKey: 'Argon',
       poolLabel: 'Gemini 4 Argon',
-      poolName: 'Gemini 4 Argon 模型池',
+      poolName: 'Gemini 4 Argon Pool',
     };
   }
   if (
@@ -145,26 +147,26 @@ function classifyQuotaPoolIdentity({
     return {
       poolKey: 'Claude & GPT',
       poolLabel: 'Claude & GPT',
-      poolName: 'Claude & GPT 模型池',
+      poolName: 'Claude & GPT Pool',
     };
   }
   if (/gemini/i.test(`${primaryText} ${gDesc}`)) {
     return {
       poolKey: 'Gemini',
       poolLabel: 'Gemini',
-      poolName: 'Gemini 模型池',
+      poolName: 'Gemini Pool',
     };
   }
   const cleanLabel = (gName || bId || 'Other').trim();
   return {
     poolKey: cleanLabel,
     poolLabel: cleanLabel,
-    poolName: `${cleanLabel} 模型池`,
+    poolName: `${cleanLabel} Pool`,
   };
 }
 
 /**
- * 判断两个归一化配额快照是否代表同一个共享配额桶（剩余比例误差 <= 1.5% 且重置时间相差 <= 2 分钟）。
+ * <= 1.5% <= 2 
  *
  * @param {ReturnType<typeof normalizeQuotaFraction>} a
  * @param {ReturnType<typeof normalizeQuotaFraction>} b
@@ -181,15 +183,15 @@ function quotaFractionsMatch(a, b) {
 }
 
 /**
- * 综合 `RetrieveUserQuotaSummary` 与 `GetUserStatus.clientModelConfigs`，构建动态模型映射表、
- * 分模型配额列表及聚合配额池映射表 (`quotaPoolsMap`)。
+ * `RetrieveUserQuotaSummary` `GetUserStatus.clientModelConfigs` 
+ * (`quotaPoolsMap`) 
  *
- * @param {object|null} officialQuota 来自 `RetrieveUserQuotaSummary` 的响应体
- * @param {object[]} clientConfigs 来自 `GetUserStatus` 的客户端模型配置数组
+ * @param {object|null} officialQuota `RetrieveUserQuotaSummary` 
+ * @param {object[]} clientConfigs `GetUserStatus` 
  * @returns {{
- *   dynamicModelMap: Map<string, object>,
- *   quotaPoolsMap: Map<string, object>,
- *   modelQuotas: object[]
+ * dynamicModelMap: Map<string, object>,
+ * quotaPoolsMap: Map<string, object>,
+ * modelQuotas: object[]
  * }}
  */
 export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
@@ -244,7 +246,7 @@ export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
         if (!builder.bucket5h) {
           builder.bucket5h = entry;
         } else if (!builder.bucketWeekly) {
-          // 当同池两个无显式标签桶都处于 <6h 临近重置期时，按重置时间早晚区分 5h 与周限桶
+          // <6h 5h
           const prevResetMs = parseIsoMs(builder.bucket5h.resetTime);
           const nextResetMs = parseIsoMs(entry.resetTime);
           if (prevResetMs > 0 && nextResetMs > 0 && nextResetMs < prevResetMs) {
@@ -260,7 +262,7 @@ export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
     }
   }
 
-  // 注册动态模型字典（不把占位符 rawKey 污染进 modelId），并采样 Carbon / Argon 与标准 Gemini 的单模型 quotaInfo
+  // rawKey modelId Carbon / Argon Gemini quotaInfo
   let sampleCarbonCfgQuota = null;
   let sampleArgonCfgQuota = null;
   let sampleStdGeminiCfgQuota = null;
@@ -286,8 +288,8 @@ export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
     }
   }
 
-  // Pro 账号回退检测：若 RetrieveUserQuotaSummary 未单独列出 Argon / Carbon 分组，
-  // 但 GetUserStatus 中 Argon / Carbon 模型的 quotaInfo 与标准 Gemini 明显分离，则合成独立周限池
+  // Pro RetrieveUserQuotaSummary Argon / Carbon
+  // GetUserStatus Argon / Carbon quotaInfo Gemini
   if (!poolBuilders.has('Argon') && sampleArgonCfgQuota) {
     const geminiBuilder = poolBuilders.get('Gemini');
     const hasGeminiBaseline = Boolean(
@@ -302,7 +304,7 @@ export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
       const argonBuilder = ensurePoolBuilder({
         poolKey: 'Argon',
         poolLabel: 'Gemini 4 Argon',
-        poolName: 'Gemini 4 Argon 模型池',
+        poolName: 'Gemini 4 Argon Pool',
       });
       argonBuilder.bucketWeekly = {
         ...sampleArgonCfgQuota,
@@ -334,7 +336,7 @@ export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
       const carbonBuilder = ensurePoolBuilder({
         poolKey: 'Carbon',
         poolLabel: 'Gemini 4 Carbon',
-        poolName: 'Gemini 4 Carbon 模型池',
+        poolName: 'Gemini 4 Carbon Pool',
       });
       carbonBuilder.bucketWeekly = {
         ...sampleCarbonCfgQuota,
@@ -357,12 +359,32 @@ export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
     const isGemini = info.family === 'Gemini';
     const targetIdent =
       isCarbon && hasDedicatedCarbonPool
-        ? { poolKey: 'Carbon', poolLabel: 'Gemini 4 Carbon', poolName: 'Gemini 4 Carbon 模型池' }
+        ? { poolKey: 'Carbon', poolLabel: 'Gemini 4 Carbon', poolName: 'Gemini 4 Carbon Pool' }
         : isArgon && hasDedicatedArgonPool
-          ? { poolKey: 'Argon', poolLabel: 'Gemini 4 Argon', poolName: 'Gemini 4 Argon 模型池' }
+          ? { poolKey: 'Argon', poolLabel: 'Gemini 4 Argon', poolName: 'Gemini 4 Argon Pool' }
           : isGemini
-            ? { poolKey: 'Gemini', poolLabel: 'Gemini', poolName: 'Gemini 模型池' }
-            : { poolKey: 'Claude & GPT', poolLabel: 'Claude & GPT', poolName: 'Claude & GPT 模型池' };
+            ? { poolKey: 'Gemini', poolLabel: 'Gemini', poolName: 'Gemini Pool' }
+            : info.family === 'Claude' || info.family === 'GPT'
+              ? { poolKey: 'Claude & GPT', poolLabel: 'Claude & GPT', poolName: 'Claude & GPT Pool' }
+              : (() => {
+                  const dynPoolKey = Array.from(poolBuilders.keys()).find(
+                    (pk) =>
+                      pk !== 'Gemini' &&
+                      pk !== 'Argon' &&
+                      pk !== 'Carbon' &&
+                      pk !== 'Claude & GPT' &&
+                      (`${cfg?.label || ''} ${cfg?.modelId || ''} ${rawKey || ''}`)
+                        .toLowerCase()
+                        .includes(String(pk).toLowerCase())
+                  );
+                  return dynPoolKey
+                    ? {
+                        poolKey: dynPoolKey,
+                        poolLabel: poolBuilders.get(dynPoolKey)?.poolLabel || dynPoolKey,
+                        poolName: `${dynPoolKey} Pool`,
+                      }
+                    : { poolKey: 'Claude & GPT', poolLabel: 'Claude & GPT', poolName: 'Claude & GPT Pool' };
+                })();
 
     const builder = ensurePoolBuilder(targetIdent);
     if (cfg?.label && !builder.models.includes(cfg.label)) {
@@ -398,12 +420,12 @@ export function buildOfficialQuotaPools(officialQuota, clientConfigs = []) {
     });
   }
 
-  // 确保基础的 Gemini 与 Claude & GPT 模型池始终存在
-  ensurePoolBuilder({ poolKey: 'Gemini', poolLabel: 'Gemini', poolName: 'Gemini 模型池' });
+  // Gemini Claude & GPT
+  ensurePoolBuilder({ poolKey: 'Gemini', poolLabel: 'Gemini', poolName: 'Gemini Pool' });
   ensurePoolBuilder({
     poolKey: 'Claude & GPT',
     poolLabel: 'Claude & GPT',
-    poolName: 'Claude & GPT 模型池',
+    poolName: 'Claude & GPT Pool',
   });
 
   const quotaPoolsMap = new Map();

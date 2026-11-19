@@ -1,15 +1,15 @@
 /**
- * @fileoverview Antigravity CLI (`agy`) 轻量底部状态栏入口 (`cli-statusline.mjs`)。
+ * @fileoverview Antigravity CLI (`agy`) (`cli-statusline.mjs`) 
  *
- * 由 `agy` TUI 在会话状态变更时通过 `statusLine` 配置拉起（300ms 节流，stdin 传入 `StatusLineData` JSON）：
- * 1. 秒级合并三路数据源：
- *    - `stdin` 实时状态（`agent_state`、`context_window.used_percentage`、`cost`、`subagents`、`cwd`）；
- *    - `~/.gemini/antigravity-cli/conversations/<cid>.db` 最新一步的纳秒级 `TPS` / `TTFT` / 缓存命中率；
- *    - `DATA_DIR/cli-status-snapshot.json` 中的官方配额池余量与跨端在线会话计数；
- * 2. 联动用户偏好设置中的胶囊槽位顺序（`topbarCapsuleSlots`）与开关（`enableCliStatusLine`），
- *    向 `stdout` 输出单行 24-bit ANSI 状态胶囊。
+ * `agy` TUI `statusLine` 300ms stdin `StatusLineData` JSON 
+ * 1. 
+ * - `stdin` `agent_state` `context_window.used_percentage` `cost` `subagents` `cwd` 
+ * - `~/.gemini/antigravity-cli/conversations/<cid>.db` `TPS` / `TTFT` / 
+ * - `DATA_DIR/cli-status-snapshot.json` 
+ * 2. `topbarCapsuleSlots` `enableCliStatusLine` 
+ * `stdout` 24-bit ANSI 
  *
- * 同时支持手动管理命令：
+ * 
  * - `node sidecars/panel/cli-statusline.mjs --install`
  * - `node sidecars/panel/cli-statusline.mjs --uninstall`
  */
@@ -23,12 +23,12 @@ import {
   speedMetric,
   summarizeSpeed,
   summarizeTtft,
-} from './trajectory-metrics.mjs';
+} from './speed-metrics.mjs';
 import {
+  getNodeSqliteDatabaseSync,
   readLocalSqliteTrajectory,
   readLocalSummaryIndex,
 } from './backend/cli-sqlite-reader.mjs';
-import { withReadOnlySqliteDb } from './backend/sqlite-client.mjs';
 import {
   ensureCliStatusLineConfigured,
   formatCliStatusLineCapsule,
@@ -39,7 +39,6 @@ import {
   loadSettings,
 } from './backend/config.mjs';
 import { computeStepCost, createStepModelResolver } from './backend/model-pricing.mjs';
-import { isThirdPartyPoolText } from './shared/telemetry-display-rules.mjs';
 
 const CLI_RUNNING_STALE_MS = 10 * 60 * 1000;
 const SNAPSHOT_LIVE_RUNNING_TTL_MS = 20 * 1000;
@@ -86,7 +85,7 @@ function readStdinJsonWithTimeout(timeoutMs = 220) {
       try {
         process.stdin.pause();
       } catch {
-        // 忽略关闭异常
+        
       }
       const raw = Buffer.concat(chunks).toString('utf8').trim();
       if (!raw) {
@@ -146,39 +145,47 @@ function findConversationIdByWorkspaceFts(cliRoot, cwd) {
   if (!cwd) return '';
   const summariesDbPath = join(cliRoot, 'conversation_summaries.db');
   if (!existsSync(summariesDbPath)) return '';
+  const DatabaseSync = getNodeSqliteDatabaseSync();
+  if (!DatabaseSync) return '';
 
   const normCwd = normalizePathForMatch(cwd);
   if (!normCwd) return '';
 
+  let db = null;
   try {
-    const matched = withReadOnlySqliteDb(summariesDbPath, (db) => {
-      const rows = db
-        .prepare(
-          `SELECT conversation_id, workspace, last_modified_time
-             FROM conversations_fts
-            WHERE chunk_index = -1
-            ORDER BY last_modified_time DESC
-            LIMIT 40`
-        )
-        .all();
-      for (const row of rows || []) {
-        const ws = normalizePathForMatch(row?.workspace);
-        const cid = String(row?.conversation_id || '').trim().toLowerCase();
-        if (cid && ws && ws === normCwd) {
-          return cid;
-        }
+    db = new DatabaseSync(summariesDbPath, { readOnly: true });
+    const rows = db
+      .prepare(
+        `SELECT conversation_id, workspace, last_modified_time
+           FROM conversations_fts
+          WHERE chunk_index = -1
+          ORDER BY last_modified_time DESC
+          LIMIT 40`
+      )
+      .all();
+    for (const row of rows || []) {
+      const ws = normalizePathForMatch(row?.workspace);
+      const cid = String(row?.conversation_id || '').trim().toLowerCase();
+      if (cid && ws && ws === normCwd) {
+        return cid;
       }
-      return '';
-    });
-    return matched || '';
+    }
   } catch {
-    // 忽略不存在 conversations_fts 表或读取失败
-    return '';
+    // conversations_fts
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        
+      }
+    }
   }
+  return '';
 }
 
 /**
- * 解析当前 CLI 窗口对应的本地 `.db` 会话轨迹并计算最新测速、延迟、缓存与成本指标。
+ * CLI `.db` 
  *
  * @param {{ cliRoot: string, stdinData?: object|null, nowMs?: number }} params
  */
@@ -231,7 +238,7 @@ export function resolveCliLocalSessionMetrics({
           try {
             mtimeMs = statSync(full).mtimeMs || 0;
           } catch {
-            // 忽略单文件 stat 异常
+            // stat
           }
           const summary = summariesMap.get(cid);
           return {
@@ -387,7 +394,7 @@ function buildStdinFallbackQuotas(stdinData) {
     const frac = Number(bucket.remaining_fraction);
     if (!Number.isFinite(frac)) continue;
     const remainingPct = Math.max(0, Math.min(100, Math.round(frac * 100)));
-    const isThirdParty = isThirdPartyPoolText(key);
+    const isThirdParty = /claude|gpt|anthropic|openai|3p|sonnet|opus|haiku/i.test(key);
     pools.push({
       poolKey: isThirdParty ? 'Claude & GPT' : 'Gemini',
       poolLabel: key,
@@ -397,7 +404,7 @@ function buildStdinFallbackQuotas(stdinData) {
   }
   if (pools.length === 0) return null;
   const modelStr = String(stdinData?.model?.id || stdinData?.model?.display_name || '');
-  const activeIsThirdParty = isThirdPartyPoolText(modelStr);
+  const activeIsThirdParty = /claude|gpt|anthropic|openai|3p|sonnet|opus|haiku/i.test(modelStr);
   const matchingPools = pools.filter((p) =>
     activeIsThirdParty ? p.poolKey === 'Claude & GPT' : p.poolKey === 'Gemini'
   );
@@ -411,7 +418,7 @@ function buildStdinFallbackQuotas(stdinData) {
 }
 
 /**
- * 融合 `stdin` (`StatusLineData`)、本地 CLI SQLite 步骤指标与后台守护配额快照，生成胶囊上下文。
+ * `stdin` (`StatusLineData`) CLI SQLite 
  */
 export function buildMergedCliCapsuleContext({
   stdinData = null,
@@ -561,6 +568,7 @@ export async function runCliStatusLineMain(argv = process.argv.slice(2)) {
   const line = formatCliStatusLineCapsule(slotCtx, {
     slots: settings?.topbarCapsuleSlots,
     showMultiSession: settings?.showTopbarMultiSession !== false,
+    quotaDisplayMode: settings?.quotaDisplayMode,
     language: settings?.language,
     color: useColor,
     terminalWidth: Number.isFinite(terminalWidth) && terminalWidth > 0 ? terminalWidth : 0,
@@ -581,7 +589,7 @@ const isDirectEntry =
   import.meta.url.endsWith('#autorun');
 if (isDirectEntry) {
   runCliStatusLineMain().catch(() => {
-    // 严格保证静默退出 0，绝不触发 CLI 连续 30 次失败熔断器
+    // 0 CLI 30
     process.exitCode = 0;
   });
 }

@@ -1,6 +1,6 @@
 /**
  * @fileoverview Decoupled Step Table Column Registry (`stepColumnRegistry.js`).
- * Defines all 12 customizable columns for `StepsDetailView` ("按步查看"),
+ * Defines all 12 customizable columns for `StepsDetailView` (" "),
  * preserving 100% of the 7 out-of-the-box default columns, clickable agent filter badges,
  * speed reason sub-lines, token combo tooltips, and high-cost highlights.
  */
@@ -20,18 +20,37 @@ import {
 } from '../core/formatters.js';
 import { t } from '../i18n/index.js';
 import {
-  DEFAULT_STEP_TABLE_COLUMNS,
-  DEFAULT_STEP_TOKEN_COMBO_FORMAT,
-  STEP_TABLE_COLUMN_KEYS,
-  normalizeStepTokenComboFormat,
-  parseStepTokenComboSegments,
-} from '../../shared/settings-normalization.mjs';
+  DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT,
+  normalizeClientStepTokenComboFormat,
+  parseClientStepTokenComboSegments,
+} from '../store/telemetryStore.js';
 
-export const STEP_COLUMN_KEYS = STEP_TABLE_COLUMN_KEYS;
-export const DEFAULT_STEP_COLUMN_KEYS = DEFAULT_STEP_TABLE_COLUMNS;
-const DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT = DEFAULT_STEP_TOKEN_COMBO_FORMAT;
-const normalizeClientStepTokenComboFormat = normalizeStepTokenComboFormat;
-const parseClientStepTokenComboSegments = parseStepTokenComboSegments;
+export const STEP_COLUMN_KEYS = Object.freeze([
+  'step',
+  'time',
+  'model',
+  'tps',
+  'ttft',
+  'duration',
+  'tokens_combo',
+  'tokens_io_cache',
+  'tokens_custom',
+  'input_tokens',
+  'cache_tokens',
+  'output_tokens',
+  'cache',
+  'cost',
+]);
+
+export const DEFAULT_STEP_COLUMN_KEYS = Object.freeze([
+  'step',
+  'model',
+  'tps',
+  'ttft',
+  'tokens_combo',
+  'cache',
+  'cost',
+]);
 
 function resolveStepTokenParts(st) {
   const inTok = Math.max(0, Number(st?.inputTokens || 0));
@@ -205,7 +224,7 @@ export const STEP_COLUMN_REGISTRY = Object.freeze({
       if (reason && !refs.speedReason) {
         refs.speedReason = h('div', {
           className: 'text-muted',
-          style: 'font-size: var(--fs-xs);',
+          style: 'font-size: var(--fs-2xs);',
         });
         refs.wrapEl.appendChild(refs.speedReason);
       }

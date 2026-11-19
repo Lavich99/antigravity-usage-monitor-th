@@ -27,7 +27,7 @@ const SEGMENT_DEFS = [
 export const ContextSegmentMeter = defineComponent({
   name: 'ContextSegmentMeter',
   setup({ getProps }) {
-    // 固定 10 个位置槽位节点，不通过 appendChild 移动 DOM，防止浏览器中断 CSS transition 动画
+    // 10 appendChild DOM CSS transition
     const slotEls = SEGMENT_DEFS.map((def) =>
       h('div', { className: `progress-seg ${def.cls}` })
     );
@@ -55,7 +55,7 @@ export const ContextSegmentMeter = defineComponent({
       });
 
       scored.sort((a, b) => b.val - a.val || a.defaultOrder - b.defaultOrder);
-      // 仅关注非零通道的相对顺序变化，决定是否启用 0.05s 先变色再伸缩的衔接延迟
+      // 0.05s
       const activeOrderSig = scored
         .filter((x) => x.val > 0)
         .map((x) => x.def.key)

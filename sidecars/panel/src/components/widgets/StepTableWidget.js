@@ -1,6 +1,6 @@
 /**
  * @fileoverview Reusable Decoupled Step Table Widget (`StepTableWidget.js`).
- * Powers both `StepsDetailView` ("按步查看") and `SettingsStructureTab` live preview,
+ * Powers both `StepsDetailView` (" ") and `SettingsStructureTab` live preview,
  * dynamically rendering 2..12 columns via `stepColumnRegistry.js`, turn rail + prompt
  * preview tooltips, and independent Main/Sub agent badges.
  */
@@ -13,7 +13,7 @@ import {
   patchKeyedList,
   patchText,
 } from '../../core/domPatch.js';
-import { getEffectiveLocale, t } from '../../i18n/index.js';
+import { getEffectiveLocale, isEnglishLocale, t } from '../../i18n/index.js';
 import {
   DEFAULT_STEP_COLUMN_KEYS,
   STEP_COLUMN_REGISTRY,
@@ -25,11 +25,14 @@ import {
   normalizeClientStepTokenComboFormat,
 } from '../../store/telemetryStore.js';
 
-export function formatTurnPromptText(rawPrompt, { hasMedia = false, mediaOnly = false } = {}) {
+export function formatTurnPromptText(rawPrompt) {
   const text = String(rawPrompt || '').trim();
-  if (mediaOnly || (!text && hasMedia)) return t('steps.turnMediaOnly');
-  if (!text) return '';
-  return hasMedia ? `${text} ${t('steps.turnMediaSuffix')}` : text;
+  if (!text) return text;
+  if (text === '[Media/Attachment]') return t('steps.turnMediaOnly');
+  if (text.endsWith(' [Attachment]')) {
+    return `${text.slice(0, -13)} ${t('steps.turnMediaSuffix')}`;
+  }
+  return text;
 }
 
 export const StepTableWidget = defineComponent({
@@ -166,9 +169,9 @@ export const StepTableWidget = defineComponent({
         effectiveScopes = ['all'],
         hasSubagents = false,
         isMergedMultiAgents = false,
-        showStepTurnRail = false,
+        showStepTurnRail = true,
         showStepAgentBadge = true,
-        showStepSpeedColor = false,
+        showStepSpeedColor = true,
         stepTokenComboFormat = undefined,
         displaySettings = {},
       } = {}
@@ -209,13 +212,7 @@ export const StepTableWidget = defineComponent({
       const getStepIsLatest = (st) =>
         Boolean(useRootTurn ? (st?.isRootLatestTurn ?? st?.isLatestTurn) : st?.isLatestTurn);
       const getStepPrompt = (st) =>
-        (useRootTurn
-          ? (st?.rootTurnPromptClean ?? st?.rootTurnPrompt ?? st?.turnPromptClean ?? st?.turnPrompt)
-          : (st?.turnPromptClean ?? st?.turnPrompt)) || '';
-      const getStepHasMedia = (st) =>
-        Boolean(useRootTurn ? (st?.rootTurnHasMedia ?? st?.turnHasMedia) : st?.turnHasMedia);
-      const getStepMediaOnly = (st) =>
-        Boolean(useRootTurn ? (st?.rootTurnMediaOnly ?? st?.turnMediaOnly) : st?.turnMediaOnly);
+        (useRootTurn ? (st?.rootTurnPrompt ?? st?.turnPrompt) : st?.turnPrompt) || '';
       const turnKeys = showStepTurnRail ? tableSteps.map((st) => {
         const tIdx = getStepTurnIdx(st);
         if (!Number.isInteger(tIdx) || tIdx <= 0) return '';
@@ -224,13 +221,8 @@ export const StepTableWidget = defineComponent({
       const formattedPrompts = new Map();
       function formattedTurnPrompt(st) {
         const raw = getStepPrompt(st);
-        const hasMedia = getStepHasMedia(st);
-        const mediaOnly = getStepMediaOnly(st);
-        const cacheKey = `${mediaOnly ? 2 : hasMedia ? 1 : 0}:${raw}`;
-        if (!formattedPrompts.has(cacheKey)) {
-          formattedPrompts.set(cacheKey, formatTurnPromptText(raw, { hasMedia, mediaOnly }));
-        }
-        return formattedPrompts.get(cacheKey);
+        if (!formattedPrompts.has(raw)) formattedPrompts.set(raw, formatTurnPromptText(raw));
+        return formattedPrompts.get(raw);
       }
 
       const decoratedSteps = tableSteps.map((st, idx) => {
@@ -353,14 +345,7 @@ export const StepTableWidget = defineComponent({
             const clickableCls = interactiveBadges && onSelectAgentScopes ? ' is-clickable' : '';
             patchAttr(refs.agentBadgeEl, 'class', `agent-badge${clickableCls} ${badgeCls}`);
             const badgeText = formatAgentBadgeText({
-              agentKind:
-                st.agentKind ||
-                (!st.isSubagent ? 'main' : st.isSideQuestion ? 'side_question' : 'subagent'),
-              agentOrdinal:
-                st.agentOrdinal || (st.isSideQuestion ? st.sideIndex || 0 : st.agentIndex || 0),
               isMain: !st.isSubagent,
-              isSideQuestion: Boolean(st.isSideQuestion),
-              sideIndex: st.sideIndex || 0,
               index: st.agentIndex || 0,
               badgeText: st.agentBadge,
             });
@@ -370,20 +355,13 @@ export const StepTableWidget = defineComponent({
               const targetScope = st.agentId || 'main';
               const isSoleTarget =
                 effectiveScopes.length === 1 && effectiveScopes[0] === targetScope;
-              const agentName = formatAgentLabel({
-                agentKind:
-                  st.agentKind ||
-                  (!st.isSubagent ? 'main' : st.isSideQuestion ? 'side_question' : 'subagent'),
-                agentOrdinal:
-                  st.agentOrdinal || (st.isSideQuestion ? st.sideIndex || 0 : st.agentIndex || 0),
-                customRole: st.agentCustomRole,
-                isMain: !st.isSubagent,
-                isSideQuestion: Boolean(st.isSideQuestion),
-                sideIndex: st.sideIndex || 0,
-                index: st.agentIndex || 0,
-                role: st.agentRole || '',
-                shortLabel: st.agentLabel || '',
-              });
+              const agentName = isEnglishLocale()
+                ? formatAgentLabel({
+                    isMain: !st.isSubagent,
+                    index: st.agentIndex || 0,
+                    role: st.agentRole || '',
+                  })
+                : st.agentLabel || t('steps.unitAgent');
               patchAttr(
                 refs.agentBadgeEl,
                 'title',

@@ -7,10 +7,6 @@
 
 :root,
 :host {
-  /* Cross-Platform Typography Stacks (macOS SF Pro / SF Mono + Windows / Linux Fallbacks) */
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, monospace;
-
   /* Architectural Geometry: Only Top Nav uses --radius-pill */
   --radius-pill: 999px;
   --radius-sm: 4px;
@@ -48,15 +44,49 @@
   --border-strong: color-mix(in srgb, var(--border-hairline) 72%, var(--text-primary) 28%);
 
   /* Typography Hierarchy & Scalable Font Tokens */
-  --fs-2xs: calc(10.5px * var(--ui-font-scale, 1));
-  --fs-xs: calc(11px * var(--ui-font-scale, 1));
-  --fs-sm: calc(11.5px * var(--ui-font-scale, 1));
-  --fs-md: calc(12px * var(--ui-font-scale, 1));
-  --fs-base-sm: calc(12.5px * var(--ui-font-scale, 1));
-  --fs-base: calc(13px * var(--ui-font-scale, 1));
-  --fs-body: calc(13px * var(--ui-font-scale, 1));
-  --fs-lg: calc(15px * var(--ui-font-scale, 1));
-  --fs-hero: calc(18px * var(--ui-font-scale, 1));
+  --font-sans: var(
+    --ag-host-font-family,
+    var(
+      --font-family,
+      var(
+        --vscode-font-family,
+        "Google Sans Flex",
+        "Google Sans",
+        "Inter",
+        "Noto Sans Thai",
+        "Leelawadee UI",
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif
+      )
+    )
+  );
+  --font-mono: var(
+    --ag-host-font-mono,
+    var(
+      --vscode-editor-font-family,
+      "Google Sans Mono",
+      "JetBrains Mono",
+      ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Monaco,
+      Consolas,
+      monospace
+    )
+  );
+  --ui-font-scale: 1;
+  --fs-2xs: calc(9.5px * var(--ui-font-scale, 1));
+  --fs-xs: calc(10px * var(--ui-font-scale, 1));
+  --fs-sm: calc(10.5px * var(--ui-font-scale, 1));
+  --fs-md: calc(11px * var(--ui-font-scale, 1));
+  --fs-base-sm: calc(11.5px * var(--ui-font-scale, 1));
+  --fs-base: calc(12px * var(--ui-font-scale, 1));
+  --fs-body: calc(12.5px * var(--ui-font-scale, 1));
+  --fs-lg: calc(14.5px * var(--ui-font-scale, 1));
+  --fs-hero: calc(17px * var(--ui-font-scale, 1));
 
   --text-primary: var(--foreground, var(--vscode-foreground, var(--vscode-editor-foreground, hsl(215 22% 15%))));
   --text-secondary: var(--muted-foreground, var(--vscode-descriptionForeground, hsl(215 12% 44%)));
@@ -124,46 +154,6 @@
   --space-5: 12px;
 }
 
-:root[data-font-scale="sm"],
-:host([data-font-scale="sm"]),
-[data-font-scale="sm"] {
-  --ui-font-scale: 0.92;
-  --ui-panel-scale: 1;
-}
-
-:root[data-font-scale="md"],
-:host([data-font-scale="md"]),
-[data-font-scale="md"] {
-  --ui-font-scale: 1;
-  --ui-panel-scale: 1;
-}
-
-:root[data-font-scale="lg"],
-:host([data-font-scale="lg"]),
-[data-font-scale="lg"] {
-  --ui-font-scale: 1.14;
-  --ui-panel-scale: 1.09;
-}
-
-:root[data-font-scale="xl"],
-:host([data-font-scale="xl"]),
-[data-font-scale="xl"] {
-  --ui-font-scale: 1.28;
-  --ui-panel-scale: 1.18;
-}
-
-[data-font-scale] {
-  --fs-2xs: calc(10.5px * var(--ui-font-scale, 1));
-  --fs-xs: calc(11px * var(--ui-font-scale, 1));
-  --fs-sm: calc(11.5px * var(--ui-font-scale, 1));
-  --fs-md: calc(12px * var(--ui-font-scale, 1));
-  --fs-base-sm: calc(12.5px * var(--ui-font-scale, 1));
-  --fs-base: calc(13px * var(--ui-font-scale, 1));
-  --fs-body: calc(13px * var(--ui-font-scale, 1));
-  --fs-lg: calc(15px * var(--ui-font-scale, 1));
-  --fs-hero: calc(18px * var(--ui-font-scale, 1));
-}
-
 @media (prefers-color-scheme: dark) {
   html[data-standalone="true"] {
     color-scheme: dark;
@@ -213,16 +203,10 @@ body {
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
 button,
-input,
-select,
-textarea,
-table,
-th,
-td {
+input {
   font-family: inherit;
   font-size: inherit;
   font-stretch: inherit;
@@ -370,19 +354,19 @@ html[data-standalone="true"] .app-shell {
 
 /* --- src/styles/controls.css --- */
 /*
- * 通用交互控件与顶栏导航样式表 (controls.css).
- * 包含：
- * 1. 顶部会话控制栏 (.session-header, .status-tag, .icon-btn, .update-badge-btn)
- * 2. 顶部唯一长药丸导航栏 (.long-pill-nav, .pill-glider, .pill-tab)
- * 3. 定制下拉选择器 (.custom-select)
- * 4. 定制步进数字输入框 (.number-input)
- * 5. 定制日期时间选择器 (.datetime-picker)
- * 6. 微边框分段控制器 (.segmented)
- * 7. 独立轨道槽自定义滚动条 (.custom-scroll-host)
- * 8. 设置表单行与主次操作按钮 (.form-row, .btn-primary, .btn-secondary, .cloud-actions-row)
+ * (controls.css).
+ * 
+ * 1. (.session-header, .status-tag, .icon-btn, .update-badge-btn)
+ * 2. (.long-pill-nav, .pill-glider, .pill-tab)
+ * 3. (.custom-select)
+ * 4. (.number-input)
+ * 5. (.datetime-picker)
+ * 6. (.segmented)
+ * 7. (.custom-scroll-host)
+ * 8. (.form-row, .btn-primary, .btn-secondary, .cloud-actions-row)
  */
 
-/* --- 1. 顶部会话控制栏与二级代理切换条 (Top Session Control Header & Agent Scope Bar) --- */
+/* --- 1. (Top Session Control Header & Agent Scope Bar) --- */
 .top-session-stack {
   display: flex;
   flex-direction: column;
@@ -485,18 +469,16 @@ html[data-standalone="true"] .app-shell {
   transform: scale(0.95);
 }
 
-/* --- 2. 顶部药丸导航栏 (Top Long-Pill Navigation Bar) --- */
+/* --- 2. (Top Long-Pill Navigation Bar) --- */
 .long-pill-nav {
   position: relative;
-  container-type: inline-size;
   display: grid;
-  grid-template-columns: repeat(var(--pill-count, 4), minmax(0, 1fr));
+  grid-template-columns: repeat(var(--pill-count, 4), 1fr);
   align-items: center;
   padding: 3px;
   background: var(--surface-panel);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-pill);
-  overflow: hidden;
   user-select: none;
 }
 
@@ -522,17 +504,15 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-width: 0;
-  min-height: calc(26px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-2);
   border: none;
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--fs-base);
   font-weight: 500;
-  line-height: 1.15;
+  line-height: 1;
   border-radius: var(--radius-pill);
-  overflow: hidden;
   cursor: pointer;
   white-space: nowrap;
   transition: color var(--dur-instant) var(--ease-fast);
@@ -546,58 +526,18 @@ html[data-standalone="true"] .app-shell {
   flex-shrink: 0;
 }
 
-.pill-tab-label {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.2;
-}
-
+.pill-tab-label,
 .pill-tab-badge {
   display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
-  min-height: 14px;
-  line-height: 1.15;
+  height: 14px;
+  line-height: 1;
+}
+
+.pill-tab-badge {
   margin-left: -2px;
   font-size: var(--fs-base-sm);
   opacity: 0.85;
-}
-
-@container (max-width: 30em) {
-  .pill-tab {
-    gap: 3.5px;
-    padding: 2px 4px;
-    font-size: var(--fs-md);
-  }
-  .pill-tab .svg-icon {
-    width: 13px;
-    height: 13px;
-  }
-  .pill-tab-badge {
-    display: none !important;
-  }
-}
-
-@container (max-width: 23em) {
-  .pill-tab {
-    gap: 0;
-    padding: 2px 3px;
-  }
-  .pill-tab .svg-icon {
-    display: none;
-  }
-}
-
-@container (max-width: 17.5em) {
-  .pill-tab .svg-icon {
-    display: block;
-  }
-  .pill-tab-label {
-    display: none;
-  }
 }
 
 .pill-tab:hover {
@@ -619,7 +559,7 @@ html[data-standalone="true"] .app-shell {
   opacity: 0.92;
 }
 
-/* --- 3. 定制下拉选择器 (Bespoke Custom Select，零原生 <select>) --- */
+/* --- 3. (Bespoke Custom Select <select>) --- */
 .custom-select {
   position: relative;
   display: inline-flex;
@@ -638,8 +578,8 @@ html[data-standalone="true"] .app-shell {
   justify-content: space-between;
   gap: var(--space-2);
   width: 100%;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px 6px;
+  height: 24px;
+  padding: 0 6px;
   background: transparent;
   color: var(--text-primary);
   border: none;
@@ -761,11 +701,11 @@ html[data-standalone="true"] .app-shell {
   stroke-width: 2.4;
 }
 
-/* --- 4. 定制步进数字框 (Bespoke Custom Number Input，零原生 <input type="number">) --- */
+/* --- 4. (Bespoke Custom Number Input <input type="number">) --- */
 .number-input {
   display: inline-flex;
   align-items: stretch;
-  min-height: calc(28px * var(--ui-font-scale, 1));
+  height: 28px;
   background: var(--surface-panel);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
@@ -811,7 +751,7 @@ html[data-standalone="true"] .app-shell {
   outline: none;
 }
 
-/* --- 5. 定制日期时间选择器 (Bespoke Custom DateTime Picker) --- */
+/* --- 5. (Bespoke Custom DateTime Picker) --- */
 .datetime-picker {
   position: relative;
   display: inline-flex;
@@ -825,8 +765,8 @@ html[data-standalone="true"] .app-shell {
   justify-content: space-between;
   gap: var(--space-2);
   width: 100%;
-  min-height: calc(26px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-2);
   background: var(--surface-panel);
   color: var(--text-primary);
   border: 1px solid var(--border-hairline);
@@ -879,7 +819,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .dt-day {
-  min-height: calc(22px * var(--ui-font-scale, 1));
+  height: 22px;
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -940,7 +880,7 @@ html[data-standalone="true"] .app-shell {
   color: var(--text-primary);
 }
 
-/* --- 6. 微边框分段控制器 (Micro-Bezel Segmented Control) --- */
+/* --- 6. (Micro-Bezel Segmented Control) --- */
 .segmented {
   display: inline-flex;
   align-items: center;
@@ -955,8 +895,8 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  padding: 2px 7px;
+  height: 22px;
+  padding: 0 7px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -979,7 +919,7 @@ html[data-standalone="true"] .app-shell {
   font-weight: 600;
 }
 
-/* --- 7. 独立槽位自定义滚动条 (Bespoke Custom Scrollbar) --- */
+/* --- 7. (Bespoke Custom Scrollbar) --- */
 .custom-scroll-host {
   position: relative;
   display: flex;
@@ -1047,7 +987,7 @@ html[data-standalone="true"] .app-shell {
   background: color-mix(in srgb, var(--accent-primary) 72%, transparent);
 }
 
-/* --- 8. 设置表单与按钮控件 (Settings Form & Buttons) --- */
+/* --- 8. (Settings Form & Buttons) --- */
 .form-row {
   display: flex;
   flex-direction: column;
@@ -1065,8 +1005,8 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 3px var(--space-5);
+  height: 28px;
+  padding: 0 var(--space-5);
   background: var(--accent-primary);
   color: var(--text-inverse);
   border: 1px solid var(--accent-primary);
@@ -1090,8 +1030,8 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 3px var(--space-4);
+  height: 28px;
+  padding: 0 var(--space-4);
   background: var(--surface-panel);
   color: var(--text-primary);
   border: 1px solid var(--border-strong);
@@ -1129,8 +1069,8 @@ html[data-standalone="true"] .app-shell {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  padding: 2px 7px;
+  height: 22px;
+  padding: 0 7px;
   font-size: var(--fs-md);
   font-weight: 600;
   border-radius: var(--radius-xs);
@@ -1150,7 +1090,7 @@ html[data-standalone="true"] .app-shell {
   transform: scale(0.96);
 }
 
-/* --- 9. 顶部栏定制面板专属表单与排序槽位控件 (Topbar Customization Controls) --- */
+/* --- 9. (Topbar Customization Controls) --- */
 .settings-inline-row {
   display: flex;
   align-items: center;
@@ -1159,12 +1099,18 @@ html[data-standalone="true"] .app-shell {
   min-height: 26px;
 }
 
+.topbar-header-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .btn-ghost-sm {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(20px * var(--ui-font-scale, 1));
-  padding: 1px 6px;
+  height: 20px;
+  padding: 0 6px;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text-secondary);
@@ -1190,13 +1136,40 @@ html[data-standalone="true"] .app-shell {
   cursor: default;
 }
 
+.topbar-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.topbar-slot-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 6px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  transition: border-color var(--dur-instant) var(--ease-fast);
+}
+
+.topbar-slot-row:focus-within,
+.topbar-slot-row:has(.is-open) {
+  z-index: 30;
+  border-color: var(--border-strong);
+}
+
+.topbar-slot-row .select-menu {
+  max-height: 216px;
+}
+
 .slot-index-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: calc(16px * var(--ui-font-scale, 1));
-  min-height: calc(16px * var(--ui-font-scale, 1));
-  padding: 0 3px;
+  width: 16px;
+  height: 16px;
   font-size: var(--fs-sm);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1246,16 +1219,16 @@ html[data-standalone="true"] .app-shell {
 
 /* --- src/styles/views-overview.css --- */
 /*
- * 实时概览视图与通用面板卡片样式表 (views-overview.css).
- * 包含：
- * 1. 通用面板容器与标题头 (.panel, .panel-header, .panel-title, .panel-meta)
- * 2. 4 格实时测速指标矩阵 (.telemetry-matrix, .matrix-cell, .cell-*)
- * 3. 10 段上下文窗口进度条与配额填充条 (.progress-track, .progress-seg, .progress-fill)
- * 4. 上下文双列图例网格与色块 (.ctx-legend-grid, .legend-*, .swatch)
- * 5. 双栏布局网格与窄屏响应式断点 (.dual-grid)
+ * (views-overview.css).
+ * 
+ * 1. (.panel, .panel-header, .panel-title, .panel-meta)
+ * 2. 4 (.telemetry-matrix, .matrix-cell, .cell-*)
+ * 3. 10 (.progress-track, .progress-seg, .progress-fill)
+ * 4. (.ctx-legend-grid, .legend-*, .swatch)
+ * 5. (.dual-grid)
  */
 
-/* --- 1. 通用微边框面板卡片 (Architectural Precision Panels) --- */
+/* --- 1. (Architectural Precision Panels) --- */
 .panel {
   display: flex;
   flex-direction: column;
@@ -1300,7 +1273,7 @@ html[data-standalone="true"] .app-shell {
   white-space: nowrap;
 }
 
-/* 配额池窗口行头：标题 + 周期用量内联（窄栏自适应截断，零额外纵向行高） */
+/* + */
 .quota-win-head {
   gap: 8px;
   min-width: 0;
@@ -1340,15 +1313,7 @@ html[data-standalone="true"] .app-shell {
   flex-shrink: 0;
 }
 
-/* --- 2. 多任务实时运行卡片列表与 4 格测速指标矩阵 (Live Running Tasks List & 4-Cell Telemetry Matrix) --- */
-.overview-modules-host {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  min-width: 0;
-  padding-bottom: 2px;
-}
-
+/* --- 2. 4 (Live Running Tasks List & 4-Cell Telemetry Matrix) --- */
 .live-activity-list {
   display: flex;
   flex-direction: column;
@@ -1411,8 +1376,8 @@ html[data-standalone="true"] .app-shell {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  min-height: calc(18px * var(--ui-font-scale, 1));
-  padding: 1px 6px;
+  height: 18px;
+  padding: 0 6px;
   font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-secondary);
@@ -1647,7 +1612,7 @@ html[data-standalone="true"] .app-shell {
   text-overflow: ellipsis;
 }
 
-/* --- 3. 10 段上下文进度条与配额池填充条 (Context Segment Meter & Quota Progress Bars) --- */
+/* --- 3. 10 (Context Segment Meter & Quota Progress Bars) --- */
 .progress-track {
   width: 100%;
   height: 6px;
@@ -1729,10 +1694,10 @@ html[data-standalone="true"] .app-shell {
   background: var(--metric-danger);
 }
 
-/* --- 4. 上下文双列图例网格 (Context 10-Channel Legend Grid) --- */
+/* --- 4. (Context 10-Channel Legend Grid) --- */
 .ctx-legend-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 5px var(--space-4);
   padding: 2px 0 0 0;
   background: transparent;
@@ -1745,7 +1710,6 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  min-width: 0;
 }
 
 .legend-left {
@@ -1774,14 +1738,14 @@ html[data-standalone="true"] .app-shell {
 .swatch.seg-system-prompt { background: var(--ctx-system-prompt); }
 .swatch.seg-user-rules { background: var(--ctx-user-rules); }
 
-/* --- 5. 双栏网格与窄视口响应式折叠 (Dual Grid & Responsive Breakpoints) --- */
+/* --- 5. (Dual Grid & Responsive Breakpoints) --- */
 .dual-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
 }
 
-/* --- 6. 上下文窗口内联代理切换器与代理徽章 (Scheme B Context Inspector & Agent Badges) --- */
+/* --- 6. (Scheme B Context Inspector & Agent Badges) --- */
 .ctx-inspector-bar {
   display: flex;
   align-items: center;
@@ -1803,8 +1767,8 @@ html[data-standalone="true"] .app-shell {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: calc(20px * var(--ui-font-scale, 1));
-  padding: 1px 6px;
+  height: 20px;
+  padding: 0 6px;
   border: 1px solid var(--border-hairline);
   background: var(--surface-panel);
   color: var(--text-secondary);
@@ -1907,16 +1871,16 @@ html[data-standalone="true"] .app-shell {
 
 /* --- src/styles/views-consumption.css --- */
 /*
- * 全景消耗统计视图样式表 (views-consumption.css).
- * 包含：
- * 1. 消费概览顶栏与 3+3 统一指标矩阵 (.cons-overview-head, .cons-unified-matrix, .cons-split-3, .cons-col)
- * 2. 4 段比例条与圆点色块 (.dot-swatch, .cons-seg-bar)
- * 3. 热门模型与数据来源列表项样式 (.cons-row-*, .cons-share-pill, .cons-item-*)
- * 4. 历史趋势纯 SVG 平滑曲线图与峰值胶囊 (.trend-*)
- * 5. 12 个月垂直堆叠柱状图与月度图例 (.monthly-*, .month-*)
+ * (views-consumption.css).
+ * 
+ * 1. 3+3 (.cons-overview-head, .cons-unified-matrix, .cons-split-3, .cons-col)
+ * 2. 4 (.dot-swatch, .cons-seg-bar)
+ * 3. (.cons-row-*, .cons-share-pill, .cons-item-*)
+ * 4. SVG (.trend-*)
+ * 5. 12 (.monthly-*, .month-*)
  */
 
-/* --- 1. 消费概览顶栏与 3+3 组合指标矩阵 (Consumption Overview Matrix) --- */
+/* --- 1. 3+3 (Consumption Overview Matrix) --- */
 .cons-overview-head {
   flex-wrap: wrap;
   gap: 6px;
@@ -1953,7 +1917,7 @@ html[data-standalone="true"] .app-shell {
 
 .cons-split-3 {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .cons-matrix-bottom {
@@ -2056,7 +2020,7 @@ html[data-standalone="true"] .app-shell {
   white-space: nowrap;
 }
 
-/* --- 2. 4 段比例条与圆点色块 (Four-Segment Bar & Dot Swatches) --- */
+/* --- 2. 4 (Four-Segment Bar & Dot Swatches) --- */
 .dot-swatch {
   width: 6px;
   height: 6px;
@@ -2070,12 +2034,12 @@ html[data-standalone="true"] .app-shell {
 .dot-swatch.seg-output { background: var(--ctx-output); }
 .dot-swatch.seg-thinking { background: var(--ctx-thinking); }
 
-/* --- 3. 热门模型与数据来源行头部对齐 (Popular Models & Sources Row Header) --- */
+/* --- 3. (Popular Models & Sources Row Header) --- */
 .cons-row-title {
   display: inline-flex;
   align-items: center;
-  min-height: calc(20px * var(--ui-font-scale, 1));
-  line-height: 1.3;
+  height: 20px;
+  line-height: 20px;
   font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
@@ -2085,16 +2049,16 @@ html[data-standalone="true"] .app-shell {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: calc(20px * var(--ui-font-scale, 1));
+  height: 20px;
 }
 
 .cons-share-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(20px * var(--ui-font-scale, 1));
-  line-height: 1.2;
-  padding: 1px 6px;
+  height: 20px;
+  line-height: 1;
+  padding: 0 6px;
   font-size: var(--fs-base);
   font-weight: 600;
   color: var(--metric-ok);
@@ -2107,8 +2071,8 @@ html[data-standalone="true"] .app-shell {
 .cons-row-tok {
   display: inline-flex;
   align-items: center;
-  min-height: calc(20px * var(--ui-font-scale, 1));
-  line-height: 1.25;
+  height: 20px;
+  line-height: 1;
   font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text-secondary);
@@ -2117,8 +2081,8 @@ html[data-standalone="true"] .app-shell {
 .cons-row-cost {
   display: inline-flex;
   align-items: center;
-  min-height: calc(20px * var(--ui-font-scale, 1));
-  line-height: 1.25;
+  height: 20px;
+  line-height: 1;
   font-size: var(--fs-base);
   font-weight: 700;
   color: var(--text-primary);
@@ -2128,7 +2092,7 @@ html[data-standalone="true"] .app-shell {
   height: 5px;
 }
 
-/* --- 4. 历史趋势交互式 SVG 平滑曲线图 (Interactive Historical Trend SVG Chart) --- */
+/* --- 4. SVG (Interactive Historical Trend SVG Chart) --- */
 .trend-chart-wrap {
   position: relative;
   width: 100%;
@@ -2195,7 +2159,7 @@ html[data-standalone="true"] .app-shell {
   top: 2px;
   left: var(--peak-x, 50%);
   transform: translateX(-50%);
-  font-size: var(--fs-xs);
+  font-size: 10px;
   font-weight: 600;
   padding: 1px 6px;
   color: var(--text-primary);
@@ -2214,7 +2178,7 @@ html[data-standalone="true"] .app-shell {
   transform: translateX(var(--tip-shift, -50%));
   width: max-content;
   min-width: 152px;
-  max-width: min(320px, calc(100% - 8px));
+  max-width: min(300px, calc(100% - 8px));
   padding: 5px 9px;
   background: var(--surface-panel);
   border: 1px solid var(--border-strong);
@@ -2232,7 +2196,7 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  font-size: var(--fs-sm);
+  font-size: 10.5px;
   color: var(--text-secondary);
 }
 
@@ -2244,7 +2208,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .trend-tip-calls {
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-muted);
   white-space: nowrap;
   max-width: 190px;
@@ -2260,7 +2224,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .trend-tip-tokens {
-  font-size: var(--fs-base);
+  font-size: 12px;
   font-weight: 700;
   color: var(--accent-primary);
   white-space: nowrap;
@@ -2268,7 +2232,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .trend-tip-cost {
-  font-size: var(--fs-md);
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -2276,7 +2240,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .trend-tip-sub {
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -2299,7 +2263,7 @@ html[data-standalone="true"] .app-shell {
 .trend-x-axis {
   position: relative;
   width: 100%;
-  min-height: calc(18px * var(--ui-font-scale, 1));
+  height: 18px;
   user-select: none;
 }
 
@@ -2308,10 +2272,10 @@ html[data-standalone="true"] .app-shell {
   top: 0;
   left: var(--tick-x, 0%);
   transform: translateX(-50%);
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-muted);
   white-space: nowrap;
-  line-height: 1.35;
+  line-height: 16px;
   cursor: pointer;
   transition: color var(--dur-instant) var(--ease-fast);
 }
@@ -2330,7 +2294,7 @@ html[data-standalone="true"] .app-shell {
   font-weight: 600;
 }
 
-/* --- 4b. 类 GitHub 每日小格子热力图 (> 90 天自动启用，一格一天) --- */
+/* --- 4b. GitHub (> 90 ) --- */
 .trend-heatmap-stage {
   display: flex;
   flex-direction: column;
@@ -2363,21 +2327,21 @@ html[data-standalone="true"] .app-shell {
 
 .trend-hm-weekdays {
   display: grid;
-  grid-template-rows: calc(15px * var(--ui-font-scale, 1)) repeat(7, var(--hm-cell));
+  grid-template-rows: 15px repeat(7, var(--hm-cell));
   row-gap: var(--hm-gap);
-  width: calc(15px * var(--ui-font-scale, 1));
+  width: 14px;
   flex-shrink: 0;
 }
 
 .trend-hm-month-spacer {
-  height: calc(15px * var(--ui-font-scale, 1));
+  height: 15px;
 }
 
 .trend-hm-wday {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  font-size: var(--fs-2xs);
+  font-size: 9px;
   line-height: 1;
   color: var(--text-muted);
 }
@@ -2398,7 +2362,7 @@ html[data-standalone="true"] .app-shell {
 
 .trend-hm-months {
   position: relative;
-  height: calc(15px * var(--ui-font-scale, 1));
+  height: 15px;
   width: 100%;
 }
 
@@ -2406,8 +2370,8 @@ html[data-standalone="true"] .app-shell {
   position: absolute;
   top: 0;
   left: calc(var(--hm-col, 0) * (var(--hm-cell) + var(--hm-gap)));
-  font-size: var(--fs-2xs);
-  line-height: 1.25;
+  font-size: 9.5px;
+  line-height: 14px;
   color: var(--text-muted);
   white-space: nowrap;
   pointer-events: none;
@@ -2419,7 +2383,6 @@ html[data-standalone="true"] .app-shell {
   grid-auto-flow: column;
   grid-auto-columns: var(--hm-cell);
   gap: var(--hm-gap);
-  cursor: pointer;
 }
 
 .trend-hm-cell {
@@ -2473,7 +2436,7 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-muted);
   min-height: 16px;
 }
@@ -2490,7 +2453,7 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   gap: 3px;
   flex-shrink: 0;
-  font-size: var(--fs-2xs);
+  font-size: 9.5px;
   color: var(--text-muted);
 }
 
@@ -2502,7 +2465,7 @@ html[data-standalone="true"] .app-shell {
   box-sizing: border-box;
 }
 
-/* --- 5. 模型与数据来源明细行容器 (Popular Models & Sources Item Rows) --- */
+/* --- 5. (Popular Models & Sources Item Rows) --- */
 .cons-item-list {
   display: flex;
   flex-direction: column;
@@ -2533,7 +2496,7 @@ html[data-standalone="true"] .app-shell {
   font-weight: 600;
 }
 
-/* --- 6. 12 个月垂直堆叠柱状图 (12-Month Stacked Bar Chart) --- */
+/* --- 6. 12 (12-Month Stacked Bar Chart) --- */
 .monthly-grid {
   display: grid;
   grid-template-columns: repeat(12, 1fr);
@@ -2551,7 +2514,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .month-cost {
-  font-size: var(--fs-2xs);
+  font-size: 9.5px;
   color: var(--text-secondary);
   min-height: 14px;
   white-space: nowrap;
@@ -2595,7 +2558,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .month-label {
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-secondary);
   padding: 1px 3px;
   border-radius: var(--radius-xs);
@@ -2609,7 +2572,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .month-tok {
-  font-size: var(--fs-2xs);
+  font-size: 9px;
   color: var(--text-muted);
   min-height: 12px;
   white-space: nowrap;
@@ -2627,14 +2590,14 @@ html[data-standalone="true"] .app-shell {
 
 /* --- src/styles/views-tables.css --- */
 /*
- * 步骤明细与模型汇总数据表样式表 (views-tables.css).
- * 包含：
- * 1. 表格专属自定义滚动容器修饰 (.table-scroll-host)
- * 2. 表格滚动视口 (.table-viewport)
- * 3. 粘性表头与紧凑高密度数据表 (.data-table)
+ * (views-tables.css).
+ * 
+ * 1. (.table-scroll-host)
+ * 2. (.table-viewport)
+ * 3. (.data-table)
  */
 
-/* --- 1. 表格专属滚动容器与视口 (Table Scroll Host & Viewport) --- */
+/* --- 1. (Table Scroll Host & Viewport) --- */
 .table-scroll-host {
   flex: 1;
   min-height: 0;
@@ -2659,18 +2622,17 @@ html[data-standalone="true"] .app-shell {
   overflow-x: auto;
 }
 
-/* --- 2. 粘性表头数据表 (Sticky-Header Data Table) --- */
+/* --- 2. (Sticky-Header Data Table) --- */
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--fs-base-sm);
+  font-size: var(--fs-md);
 }
 
 .data-table th,
 .data-table td {
-  padding: calc(5px * var(--ui-font-scale, 1)) calc(4px * var(--ui-font-scale, 1));
+  padding: 5px 4px;
   text-align: left;
-  font-size: var(--fs-base-sm);
   border-bottom: 1px solid var(--border-hairline);
   white-space: nowrap;
 }
@@ -2707,7 +2669,7 @@ html[data-standalone="true"] .app-shell {
 .step-model-cell {
   display: inline-flex;
   align-items: baseline;
-  max-width: calc(var(--step-model-max-w, 176px) * var(--ui-font-scale, 1));
+  max-width: var(--step-model-max-w, 176px);
   min-width: 0;
   vertical-align: bottom;
 }
@@ -2723,7 +2685,7 @@ html[data-standalone="true"] .app-shell {
 .step-model-compact {
   flex-shrink: 0;
   white-space: nowrap;
-  color: var(--accent-primary);
+  color: var(--metric-info, var(--accent-primary));
   font-weight: 500;
 }
 
@@ -2762,9 +2724,8 @@ html[data-standalone="true"] .app-shell {
 
 .steps-inline-scope-select .select-trigger,
 .steps-inline-model-select .select-trigger {
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  height: auto;
-  padding: 2px 6px;
+  height: 22px;
+  padding: 0 6px;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
@@ -2773,7 +2734,7 @@ html[data-standalone="true"] .app-shell {
   background: var(--surface-subtle);
 }
 
-/* --- 2.5 极简对话轮次导轨与起点圆点 (Minimalist Turn Rail & Prompt Preview) --- */
+/* --- 2.5 (Minimalist Turn Rail & Prompt Preview) --- */
 .steps-data-table.has-turn-rail th:first-child,
 .steps-data-table.has-turn-rail td:first-child {
   padding-left: 17px;
@@ -2865,7 +2826,7 @@ html[data-standalone="true"] .app-shell {
   display: none !important;
 }
 
-/* 极简紧凑提问文本悬停预览气泡 */
+/* */
 .turn-prompt-tip {
   position: absolute;
   z-index: 45;
@@ -2888,7 +2849,7 @@ html[data-standalone="true"] .app-shell {
   animation: anim-popover-in var(--dur-instant) var(--ease-fast);
 }
 
-/* --- 3. 按模型汇总分析视图：双趋势图与极简模型总览 (Models Analytics Pane) --- */
+/* --- 3. (Models Analytics Pane) --- */
 .models-analytics-pane {
   display: flex;
   flex-direction: column;
@@ -2950,9 +2911,8 @@ html[data-standalone="true"] .app-shell {
 }
 
 .sstep-fit-model-select .select-trigger {
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  height: auto;
-  padding: 2px 6px;
+  height: 22px;
+  padding: 0 6px;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
@@ -3008,7 +2968,7 @@ html[data-standalone="true"] .app-shell {
 .sstep-axis-label {
   fill: var(--text-muted);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: var(--fs-2xs);
+  font-size: 9.5px;
   user-select: none;
   pointer-events: none;
 }
@@ -3116,7 +3076,7 @@ html[data-standalone="true"] .app-shell {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--fs-md);
+  font-size: 11px;
   pointer-events: none;
   z-index: 2;
 }
@@ -3127,7 +3087,7 @@ html[data-standalone="true"] .app-shell {
   flex-wrap: wrap;
   gap: 4px 10px;
   padding-top: 2px;
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-secondary);
 }
 
@@ -3166,7 +3126,7 @@ html[data-standalone="true"] .app-shell {
   flex-wrap: wrap;
   gap: 4px 8px;
   padding-top: 2px;
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-muted);
 }
 
@@ -3226,10 +3186,10 @@ html[data-standalone="true"] .app-shell {
 }
 
 .sstep-fit-delta {
-  font-size: var(--fs-xs);
+  font-size: 10px;
 }
 
-/* --- 4. 极简高密度模型总览列表 (Minimalist Session Model Summary Cards) --- */
+/* --- 4. (Minimalist Session Model Summary Cards) --- */
 .smodel-section {
   display: flex;
   flex-direction: column;
@@ -3361,13 +3321,13 @@ html[data-standalone="true"] .app-shell {
 
 /* --- src/styles/views-settings.css --- */
 /*
- * 模块化偏好设置样式表 (views-settings.css).
- * 包含：
- * 1. 顶部偏好设置切换导航条 (.settings-view-root, .settings-subnav-bar)
- * 2. 主题强调色色卡选择器 (.theme-color-picker, .theme-host-chip, .theme-swatch-btn)
- * 3. 结构页手风琴折叠面板 (.collapsible-section, .collapsible-trigger, .collapsible-body)
- * 4. 通用 + / - / ↑ / ↓ 自添加排序列表 (.editable-slot-list, .editable-slot-row, .slot-add-btn)
- * 5. 其他页维护操作行与二次确认危险态按钮 (.settings-action-row, .btn-danger-confirm)
+ * (views-settings.css).
+ * 
+ * 1. (.settings-view-root, .settings-subnav-bar)
+ * 2. (.theme-color-picker, .theme-host-chip, .theme-swatch-btn)
+ * 3. (.collapsible-section, .collapsible-trigger, .collapsible-body)
+ * 4. + / - / ↑ / ↓ (.editable-slot-list, .editable-slot-row, .slot-add-btn)
+ * 5. (.settings-action-row, .btn-danger-confirm)
  */
 
 .settings-view-root {
@@ -3399,12 +3359,12 @@ html[data-standalone="true"] .app-shell {
 }
 
 .settings-subnav-bar .seg-btn {
-  min-height: calc(24px * var(--ui-font-scale, 1));
+  height: 24px;
   font-size: var(--fs-base-sm);
   font-weight: 500;
 }
 
-/* --- 结构页三级子导航菜单 (.settings-thirdnav-bar) --- */
+/* --- (.settings-thirdnav-bar) --- */
 .settings-thirdnav-bar {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3417,9 +3377,9 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: calc(25px * var(--ui-font-scale, 1));
+  height: 25px;
   min-width: 0;
-  padding: 2px 6px;
+  padding: 0 6px;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
   background: var(--surface-subtle);
@@ -3460,13 +3420,96 @@ html[data-standalone="true"] .app-shell {
   padding-bottom: 2px;
 }
 
+/* Custom Offline Model Pricing Form & List */
+.custom-price-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+.custom-price-rates-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.custom-price-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.custom-price-input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  outline: none;
+  box-sizing: border-box;
+}
+.custom-price-input:focus {
+  border-color: var(--accent-primary-border);
+  background: var(--surface-panel);
+}
+.custom-price-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.custom-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-subtle);
+}
+.custom-price-row-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.custom-price-row-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-price-row-meta {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-price-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.custom-price-mini-btn {
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+}
+
 .settings-hint-text {
   font-size: var(--fs-sm);
   line-height: 1.4;
   color: var(--text-muted);
 }
 
-/* --- 主题色色卡选择器 (ThemeColorPicker) --- */
+/* --- (ThemeColorPicker) --- */
 .theme-color-picker {
   display: flex;
   align-items: center;
@@ -3478,8 +3521,8 @@ html[data-standalone="true"] .app-shell {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px 9px;
+  height: 24px;
+  padding: 0 9px;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text-secondary);
@@ -3545,7 +3588,7 @@ html[data-standalone="true"] .app-shell {
   stroke-width: 2.5;
 }
 
-/* --- 手风琴折叠面板 (CollapsibleSection) --- */
+/* --- (CollapsibleSection) --- */
 .collapsible-section {
   gap: 0;
   padding: 0;
@@ -3592,13 +3635,17 @@ html[data-standalone="true"] .app-shell {
   font-weight: 600;
 }
 
-/* --- 结构页真实 UI 实时预览画布（1:1 零缩放、零套娃外框，直接呈现真实组件） --- */
+/* --- UI --- */
 .structure-preview-canvas {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
+}
+
+.structure-preview-canvas.is-scaled {
+  zoom: 0.86;
 }
 
 .wm-hover-tip.is-preview {
@@ -3618,7 +3665,10 @@ html[data-standalone="true"] .app-shell {
 }
 
 .overview-modules-host.is-preview {
-  padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .structure-preview-empty,
@@ -3641,7 +3691,6 @@ html[data-standalone="true"] .app-shell {
 }
 
 .preview-capsule-bar {
-  --ui-font-scale: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3651,10 +3700,6 @@ html[data-standalone="true"] .app-shell {
   background: var(--surface-bg);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
-  font-family: "Google Sans Flex", "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  font-variant-numeric: tabular-nums;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   overflow-x: auto;
   user-select: none;
 }
@@ -3727,6 +3772,21 @@ html[data-standalone="true"] .app-shell {
   white-space: nowrap;
 }
 
+.preview-win-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 4px;
+  flex-shrink: 0;
+}
+
+.preview-win-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-secondary) 26%, transparent);
+}
+
 .preview-composer-send {
   display: inline-flex;
   align-items: center;
@@ -3776,8 +3836,8 @@ html[data-standalone="true"] .app-shell {
 .collapsible-badge {
   display: inline-flex;
   align-items: center;
-  min-height: calc(18px * var(--ui-font-scale, 1));
-  padding: 1px 6px;
+  height: 18px;
+  padding: 0 6px;
   font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-secondary);
@@ -3808,7 +3868,7 @@ html[data-standalone="true"] .app-shell {
   margin: 2px 0;
 }
 
-/* --- 通用可增删排序槽位列表 (EditableSlotList) --- */
+/* --- (EditableSlotList) --- */
 .editable-slot-wrap {
   display: flex;
   flex-direction: column;
@@ -3922,8 +3982,8 @@ html[data-standalone="true"] .app-shell {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px 9px;
+  height: 24px;
+  padding: 0 9px;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--accent-primary);
@@ -3945,7 +4005,7 @@ html[data-standalone="true"] .app-shell {
   cursor: default;
 }
 
-/* --- 其他页：维护操作行 --- */
+/* --- --- */
 .settings-action-block {
   display: flex;
   align-items: center;
@@ -4056,8 +4116,8 @@ html[data-standalone="true"] .app-shell {
 .settings-text-input {
   width: 100%;
   min-width: 0;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 2px 8px;
+  height: 28px;
+  padding: 0 8px;
   background: var(--surface-subtle);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
@@ -4083,7 +4143,7 @@ html[data-standalone="true"] .app-shell {
 }
 
 .settings-number-wrap .number-input {
-  min-height: calc(24px * var(--ui-font-scale, 1));
+  height: 24px;
   background: var(--surface-subtle);
 }
 
@@ -4106,7 +4166,7 @@ html[data-standalone="true"] .app-shell {
   color: var(--text-secondary);
 }
 
-/* --- 其他页：模型上下文设置风险警告遮罩 --- */
+/* --- --- */
 .ctx-risk-stage {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -4176,161 +4236,20 @@ html[data-standalone="true"] .app-shell {
 
 .ctx-risk-accept-btn {
   margin-top: 2px;
-  min-height: calc(26px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-3);
+  height: 26px;
+  padding: 0 var(--space-3);
   font-size: var(--fs-md);
-}
-
-/* --- CDP / 双栖桥接端口诊断与一键重拉卡片 (.settings-bridge-notice) --- */
-.app-bridge-banner-slot {
-  padding: 0 var(--space-4) var(--space-2);
-  flex-shrink: 0;
-}
-
-.app-bridge-banner-slot[hidden] {
-  display: none !important;
-}
-
-.settings-bridge-notice {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 5px;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-xs);
-  border: 1px solid color-mix(in srgb, var(--metric-warn) 42%, var(--border-hairline));
-  background: color-mix(in srgb, var(--surface-panel) 89%, var(--metric-warn) 7%);
-}
-
-.settings-bridge-notice.is-restart {
-  border-color: color-mix(in srgb, var(--metric-info) 42%, var(--border-hairline));
-  background: color-mix(in srgb, var(--surface-panel) 89%, var(--metric-info) 7%);
-}
-
-.settings-bridge-notice[hidden] {
-  display: none !important;
-}
-
-.settings-bridge-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-  color: var(--metric-warn);
-}
-
-.settings-bridge-head-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.settings-bridge-notice.is-restart .settings-bridge-head,
-.settings-bridge-notice.is-restart .settings-bridge-icon,
-.settings-bridge-notice.is-restart .settings-bridge-title {
-  color: var(--metric-info);
-}
-
-.settings-bridge-icon {
-  color: var(--metric-warn);
-  flex-shrink: 0;
-}
-
-.settings-bridge-title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  line-height: 1.35;
-  color: var(--metric-warn);
-}
-
-.settings-bridge-dismiss-btn {
-  padding: 2px 4px;
-  min-height: 20px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.settings-bridge-desc {
-  margin: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.48;
-  color: var(--text-primary);
-  word-break: break-word;
-}
-
-.settings-bridge-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.settings-bridge-relaunch-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-3);
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--accent-primary-border);
-  background: var(--accent-primary-soft);
-  color: var(--accent-primary);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  cursor: pointer;
-  max-width: 100%;
-  transition:
-    background-color var(--dur-instant) var(--ease-fast),
-    opacity var(--dur-instant) var(--ease-fast);
-}
-
-.settings-bridge-relaunch-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
-}
-
-.settings-bridge-relaunch-btn:disabled {
-  opacity: 0.65;
-  cursor: wait;
-}
-
-.settings-bridge-relaunch-btn[hidden] {
-  display: none !important;
-}
-
-.settings-bridge-relaunch-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-bridge-copy-btn {
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-3);
-  font-size: var(--fs-xs);
-  font-family: var(--font-mono);
-  max-width: 100%;
-}
-
-.settings-bridge-copy-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* --- src/styles/overlay.css --- */
 /*
- * 双栖模式顶栏胶囊与悬浮面板样式表 (overlay.css).
- * 严格遵循单层微边框与语义变量规范（零硬编码色值、零 Emoji、硬件加速合成层动画）。
+ * (overlay.css).
+ * Emoji 
  */
 
-/* --- 1. 顶栏胶囊宿主容器 (Titlebar Capsule Host) --- */
+/* --- 1. (Titlebar Capsule Host) --- */
 :host(.wm-capsule-host) {
-  --ui-font-scale: 1 !important;
+  --ui-font-scale: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -4340,7 +4259,7 @@ html[data-standalone="true"] .app-shell {
   -webkit-app-region: no-drag;
   pointer-events: auto;
   user-select: none;
-  font-family: "Google Sans Flex", "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 450;
   font-stretch: 100%;
@@ -4349,7 +4268,6 @@ html[data-standalone="true"] .app-shell {
   letter-spacing: 0.015em;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   color: var(--text-primary);
   z-index: 2147482900;
 }
@@ -4403,10 +4321,6 @@ html[data-standalone="true"] .app-shell {
   right: 144px;
 }
 
-:host(.wm-capsule-host[data-dock="fixed"][data-os="mac"]) {
-  right: 12px;
-}
-
 @keyframes wm-dot-pulse {
   0%, 100% {
     opacity: 1;
@@ -4416,7 +4330,7 @@ html[data-standalone="true"] .app-shell {
   }
 }
 
-/* 左侧多会话实时状态触发器（无边框、与宿主顶栏按钮同高 28px、整数行高防压扁） */
+/* 28px */
 .wm-multi-btn {
   position: relative;
   display: inline-flex;
@@ -4535,7 +4449,7 @@ html[data-standalone="true"] .app-shell {
   color: var(--text-primary);
 }
 
-/* 右侧胶囊通用槽位容器与按指标预占定宽（严格防止动态数值跳动，保留舒展字间距） */
+/* */
 .wm-cap-slot {
   display: inline-flex;
   align-items: center;
@@ -4543,7 +4457,9 @@ html[data-standalone="true"] .app-shell {
   height: 18px;
   line-height: 18px;
   flex-shrink: 0;
+  contain: layout style;
   color: var(--text-secondary);
+  transition: color 260ms cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 .wm-slot-text {
@@ -4555,13 +4471,25 @@ html[data-standalone="true"] .app-shell {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
+  transition: color 260ms cubic-bezier(0.65, 0, 0.35, 1);
 }
 
-/* 环形上下文指示器（固定预占宽度 58px：14px 环 + 5px 间距 + 完整容纳四字符 100%） */
+/* 59px = 14px ring + 4px gap + 41px locked number box */
 .wm-ctx-seg {
-  justify-content: center;
-  gap: 5px;
-  width: 58px;
+  justify-content: flex-start;
+  gap: 4px;
+  width: 59px;
+  min-width: 59px;
+  max-width: 59px;
+}
+
+@keyframes wm-ctx-ring-spin {
+  from {
+    transform: rotate(-90deg);
+  }
+  to {
+    transform: rotate(270deg);
+  }
 }
 
 .wm-ring-svg {
@@ -4569,6 +4497,12 @@ html[data-standalone="true"] .app-shell {
   height: 14px;
   flex-shrink: 0;
   transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.wm-capsule-btn.is-running .wm-cap-slot[data-metric="context"] .wm-ring-svg {
+  will-change: transform;
+  animation: wm-ctx-ring-spin 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
 }
 
 .wm-ring-track {
@@ -4582,9 +4516,10 @@ html[data-standalone="true"] .app-shell {
   stroke: var(--accent-primary);
   stroke-width: 2;
   stroke-linecap: round;
+  will-change: stroke-dashoffset;
   transition:
-    stroke-dashoffset var(--dur-normal) var(--ease-fast),
-    stroke var(--dur-fast) var(--ease-fast);
+    stroke-dashoffset 420ms cubic-bezier(0.65, 0, 0.35, 1),
+    stroke 260ms cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 .wm-ring-fill.tone-warn {
@@ -4595,11 +4530,43 @@ html[data-standalone="true"] .app-shell {
   stroke: var(--metric-danger);
 }
 
+.wm-ring-fill[hidden],
+.wm-ring-seg[hidden] {
+  display: none;
+}
+
+.wm-ring-seg {
+  fill: none;
+  stroke: var(--accent-primary);
+  stroke-width: 2;
+  stroke-linecap: butt;
+  will-change: stroke-dasharray, stroke-dashoffset;
+  transition:
+    stroke-dasharray 420ms cubic-bezier(0.65, 0, 0.35, 1),
+    stroke-dashoffset 420ms cubic-bezier(0.65, 0, 0.35, 1),
+    stroke 260ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.wm-ring-seg.seg-assistant { stroke: var(--ctx-assistant); }
+.wm-ring-seg.seg-tool-results { stroke: var(--ctx-tool-results); }
+.wm-ring-seg.seg-user-input { stroke: var(--ctx-user-input); }
+.wm-ring-seg.seg-subagent-msg { stroke: var(--ctx-subagent-msg); }
+.wm-ring-seg.seg-checkpoint { stroke: var(--ctx-checkpoint); }
+.wm-ring-seg.seg-system-tools { stroke: var(--ctx-system-tools); }
+.wm-ring-seg.seg-mcp-tools { stroke: var(--ctx-mcp-tools); }
+.wm-ring-seg.seg-skills { stroke: var(--ctx-skills); }
+.wm-ring-seg.seg-system-prompt { stroke: var(--ctx-system-prompt); }
+.wm-ring-seg.seg-user-rules { stroke: var(--ctx-user-rules); }
+
 .wm-ctx-pct {
-  min-width: 28px;
-  max-width: none;
-  overflow: visible;
-  text-overflow: clip;
+  width: 41px;
+  min-width: 41px;
+  max-width: 41px;
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  line-height: 18px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
   text-align: left;
   font-weight: 500;
   color: var(--text-primary);
@@ -4612,7 +4579,7 @@ html[data-standalone="true"] .app-shell {
   flex-shrink: 0;
 }
 
-/* 速度槽位（固定预占宽度 58px 居中对齐） */
+/* 58px */
 .wm-seg-speed {
   width: 58px;
 }
@@ -4627,7 +4594,7 @@ html[data-standalone="true"] .app-shell {
   font-weight: 500;
 }
 
-/* 首字延迟槽位（固定预占宽度 46px 居中对齐，覆盖 0.85s ~ 105s） */
+/* 46px 0.85s ~ 105s */
 .wm-seg-ttft {
   width: 46px;
 }
@@ -4637,7 +4604,7 @@ html[data-standalone="true"] .app-shell {
   text-align: center;
 }
 
-/* 本次费用槽位（固定预占宽度 52px 居中对齐，覆盖 <$0.001 ~ $99.99） */
+/* 52px <$0.001 ~ $99.99 */
 .wm-seg-cost {
   width: 52px;
 }
@@ -4649,17 +4616,24 @@ html[data-standalone="true"] .app-shell {
   font-weight: 500;
 }
 
-/* 配额槽位（固定预占宽度 52px 居中对齐，完整容纳 余 100% / 余 --% 且在任意槽位对称） */
+/* Locked ring + 2-decimal percentage geometry matching .wm-ctx-seg */
 .wm-seg-quota {
-  width: 52px;
+  justify-content: flex-start;
+  gap: 4px;
+  width: 59px;
+  min-width: 59px;
+  max-width: 59px;
 }
 
 .wm-quota-text {
-  width: 52px;
-  text-align: center;
+  width: 41px;
+  min-width: 41px;
+  max-width: 41px;
+  text-align: left;
+  font-weight: 500;
 }
 
-/* 缓存命中率槽位（固定预占宽度 44px 居中对齐） */
+/* 44px */
 .wm-seg-cache {
   width: 44px;
 }
@@ -4669,7 +4643,7 @@ html[data-standalone="true"] .app-shell {
   text-align: center;
 }
 
-/* 会话总 Token 槽位（固定预占宽度 52px 居中对齐） */
+/* Token 52px */
 .wm-seg-tokens {
   width: 52px;
 }
@@ -4708,7 +4682,7 @@ html[data-standalone="true"] .app-shell {
   color: var(--text-muted);
 }
 
-/* 仅在超窄 ring-only 折叠态下使用右上角 5px 提示圆点；常规态由柔和微胶囊 .wm-update-btn 承载 */
+/* ring-only 5px .wm-update-btn */
 .wm-update-dot {
   position: absolute;
   top: 3px;
@@ -4724,7 +4698,7 @@ html[data-standalone="true"] .app-shell {
   display: none !important;
 }
 
-/* 顶栏右侧柔和半透明新版本胶囊按钮（20px 矮胶囊嵌套于 28px 顶栏，克制不突兀，左键一键升级） */
+/* 20px 28px */
 .wm-update-btn {
   display: inline-flex;
   align-items: center;
@@ -4793,7 +4767,7 @@ html[data-standalone="true"] .app-shell {
   display: none !important;
 }
 
-/* 四级响应式迟滞折叠（基于可见槽位次序 data-vis-rank 1..5 与分隔线次序 data-sep-for-rank 动态折叠） */
+/* data-vis-rank 1..5 data-sep-for-rank */
 :host(.wm-capsule-host[data-layout="compact"]) .wm-cap-slot[data-vis-rank="3"],
 :host(.wm-capsule-host[data-layout="compact"]) .wm-cap-slot[data-vis-rank="4"],
 :host(.wm-capsule-host[data-layout="compact"]) .wm-cap-slot[data-vis-rank="5"],
@@ -4839,9 +4813,11 @@ html[data-standalone="true"] .app-shell {
 
 :host(.wm-capsule-host[data-layout="ring-only"]) .wm-cap-slot[data-vis-rank="1"].wm-ctx-seg {
   width: 14px;
+  min-width: 14px;
+  max-width: 14px;
 }
 
-/* --- 2. 顶层浮层传送门宿主 (Body Portal Host: Multi-Session HUD, Tooltip & Full 4-Tab Popover) --- */
+/* --- 2. (Body Portal Host: Multi-Session HUD, Tooltip & Full 4-Tab Popover) --- */
 :host(.wm-portal-host) {
   position: fixed;
   inset: 0;
@@ -4855,7 +4831,6 @@ html[data-standalone="true"] .app-shell {
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   color: var(--text-primary);
 }
 
@@ -4909,12 +4884,12 @@ html[data-standalone="true"] .app-shell {
   max-width: none;
 }
 
-/* 顶栏胶囊悬停全景概览浮层（复用实时概览三卡片架构，全槽位预占，仅就地更新节点不跳动） */
+/* */
 .wm-hover-tip {
   position: fixed;
   top: 42px;
   left: 12px;
-  width: min(calc(522px * var(--ui-panel-scale, 1)), calc(100vw - 24px));
+  width: min(522px, calc(100vw - 24px));
   max-height: calc(100vh - 54px);
   padding: var(--space-3) var(--space-4);
   display: flex;
@@ -4933,12 +4908,12 @@ html[data-standalone="true"] .app-shell {
   animation: wm-popover-in var(--dur-instant) var(--ease-fast);
 }
 
-/* 左侧在线多会话实时看板浮层（单层无套娃细线卡片，仅显示在线运行会话，留足呼吸感） */
+/* */
 .wm-multi-panel {
   position: fixed;
   top: 42px;
   left: 12px;
-  width: min(calc(464px * var(--ui-panel-scale, 1)), calc(100vw - 24px));
+  width: min(464px, calc(100vw - 24px));
   max-height: calc(100vh - 54px);
   padding: 14px 16px;
   display: flex;
@@ -5044,8 +5019,8 @@ html[data-standalone="true"] .app-shell {
 .wm-pin-badge {
   display: inline-flex;
   align-items: center;
-  min-height: calc(16px * var(--ui-font-scale, 1));
-  padding: 1px 5px;
+  height: 16px;
+  padding: 0 5px;
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--accent-primary);
@@ -5057,8 +5032,8 @@ html[data-standalone="true"] .app-shell {
 .wm-session-tag {
   display: inline-flex;
   align-items: center;
-  min-height: calc(16px * var(--ui-font-scale, 1));
-  padding: 1px 4px;
+  height: 16px;
+  padding: 0 4px;
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
@@ -5085,7 +5060,7 @@ html[data-standalone="true"] .app-shell {
   border-bottom: 1px solid var(--border-hairline);
 }
 
-/* 多会话单层面板内去除重复边框与底色，留足行距与段落呼吸感，仅靠左侧圆点闪烁表达状态 */
+/* */
 .wm-multi-panel .live-activity-list {
   gap: 0;
 }
@@ -5138,4 +5113,14 @@ html[data-standalone="true"] .app-shell {
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text-secondary) 38%, transparent);
   flex-shrink: 0;
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .wm-cap-slot,
+  .wm-slot-text,
+  .wm-ring-fill,
+  .wm-ring-seg {
+    transition: none !important;
+  }
 }

@@ -1,12 +1,12 @@
 /**
- * @fileoverview View 2: ConsumptionView (全景消耗统计视图).
- * 采用 5 段式分析布局展示指定时间窗口内的全量 Token 与费用消耗：
- * 1. 用量概览：支持预设时间段与自定义区间筛选，通过 3+3 组合矩阵展示总 Token/调用次数、
- *    USD/CNY 预估费用、缓存命中率与命中量、新输入/缓存读取（含节省费用）/输出细分占比，以及底部 4 段比例条 (`FourSegmentBar`)。
- * 2. 历史趋势：基于 `TrendAreaChart` 渲染纯 SVG 三次贝塞尔平滑曲线面积图、峰值气泡、对齐多刻度时间轴与悬停详情浮层。
- * 3. 热门模型：按 Token 总量降序展示各模型的消耗占比徽章、4 段构成条及输入/缓存/输出/思考/调用明细。
- * 4. 数据来源：按调用来源聚合展示 Token 构成、占比与费用明细。
- * 5. 按月细分：12 个月垂直 4 段堆叠柱状图，直观对比全年各月费用、Token 总量与缓存/思考结构。
+ * @fileoverview View 2: ConsumptionView ( ).
+ * 5 Token 
+ * 1. 3+3 Token/ 
+ * USD/CNY / / 4 (`FourSegmentBar`) 
+ * 2. `TrendAreaChart` SVG 
+ * 3. Token 4 / / / / 
+ * 4. Token 
+ * 5. 12 4 Token / 
  */
 
 import { defineComponent } from '../core/component.js';
@@ -27,7 +27,6 @@ import {
   normalizeModelDisplayMode,
   normalizeOrchestratorIdDisplayMode,
 } from '../core/formatters.js';
-import { scaleBucketsExact } from '../../shared/telemetry-display-rules.mjs';
 import { i18nStore, isEnglishLocale, t } from '../i18n/index.js';
 import { createSvgIcon } from '../icons/SvgIcon.js';
 import { fetchTelemetry, telemetryStore } from '../store/telemetryStore.js';
@@ -41,7 +40,7 @@ import { CustomScrollbar } from '../components/ui/CustomScrollbar.js';
 import { createFourSegmentBar } from '../components/ui/FourSegmentBar.js';
 import { SegmentedControl } from '../components/ui/SegmentedControl.js';
 
-/** 消耗统计顶栏支持的时间范围预设项 */
+/** */
 function getConsumptionTimeRangeOptions() {
   return [
     { value: 'today', label: t('cons.rangeToday') },
@@ -57,7 +56,7 @@ function getConsumptionTimeRangeOptions() {
 export const ConsumptionView = defineComponent({
   name: 'ConsumptionView',
   setup({ onCleanup }) {
-    // --- 时间筛选栏：快速时间段分段控制器与自定义起止时间选择条 ---
+    // --- ---
     let draftStartMs = telemetryStore.getState().customStartMs;
     let draftEndMs = telemetryStore.getState().customEndMs;
     let hasUncommittedCustomDraft = false;
@@ -144,12 +143,12 @@ export const ConsumptionView = defineComponent({
       ]
     );
 
-    // --- Section 1: 用量概览矩阵 (上层 3 列核心总量 + 下层 3 列新输入/缓存读取/输出拆分 + 底部 4 段比例条) ---
+    // --- Section 1: ( 3 + 3 / / + 4 ) ---
     const dateSpanBadge = h('span', { className: 'cons-badge text-mono', text: '-- ~ --' });
     const heroTotalTokens = h('strong', { className: 'cons-hero-num text-mono', text: '0' });
     const heroTotalCalls = h('span', { className: 'text-muted text-mono', style: 'font-size: var(--fs-md);', text: t('cons.callsCount', { calls: 0 }) });
     const heroCostUsd = h('strong', { className: 'cons-hero-cost text-mono', text: '$0.00' });
-    const heroCostCny = h('span', { className: 'text-muted text-mono', style: 'font-size: var(--fs-md);', text: '≈ ¥0' });
+    const heroCostCny = h('span', { className: 'text-muted text-mono', style: 'font-size: var(--fs-md);', text: formatCnyApprox(0) });
 
     const cacheHitPctEl = h('strong', { className: 'cons-hero-cache text-mono', text: '0%' });
     const cacheTokensEl = h('span', { className: 'text-muted text-mono', style: 'font-size: var(--fs-md);', text: t('cons.cacheHitTokens', { tokens: 0 }) });
@@ -241,7 +240,7 @@ export const ConsumptionView = defineComponent({
       overviewSegBar.el,
     ]);
 
-    // --- Section 2: 历史趋势 (交互式 SVG 平滑曲线图 + 悬停精确日期/小时浮层 + 多刻度时间轴) ---
+    // --- Section 2: ( SVG + / + ) ---
     const trendTitleSpan = h('span', { text: t('cons.trendTitle') });
     const trendRangeBadge = h('span', { className: 'cons-badge', text: t('cons.allTime') });
     const trendGranularityHint = h('span', {
@@ -262,7 +261,7 @@ export const ConsumptionView = defineComponent({
       trendChart.el,
     ]);
 
-    // --- Section 3: 模型排行列表 ---
+    // --- Section 3: ---
     const modelsTitleSpan = h('span', { className: 'panel-title', text: t('cons.topModels') });
     const modelsListEl = h('div', { className: 'cons-item-list' });
     const modelsPanel = h('section', { className: 'panel' }, [
@@ -272,7 +271,7 @@ export const ConsumptionView = defineComponent({
       modelsListEl,
     ]);
 
-    // --- Section 4: 客户端来源列表 ---
+    // --- Section 4: ---
     const sourcesTitleSpan = h('span', { className: 'panel-title', text: t('cons.clientSources') });
     const sourcesListEl = h('div', { className: 'cons-item-list' });
     const sourcesPanel = h('section', { className: 'panel' }, [
@@ -282,7 +281,7 @@ export const ConsumptionView = defineComponent({
       sourcesListEl,
     ]);
 
-    // --- Section 5: 按月细分 (12 个月垂直 4 段堆叠柱状图) ---
+    // --- Section 5: (12 4 ) ---
     const monthlyTitleSpan = h('span', { className: 'panel-title', text: t('cons.monthlyTitle') });
     const monthlyYearBadge = h('span', { className: 'cons-badge text-mono', text: '2026' });
     const monthlyCols = Array.from({ length: 12 }, (_, idx) => {
@@ -376,8 +375,8 @@ export const ConsumptionView = defineComponent({
     });
 
     /**
-     * 创建热门模型或数据来源的通用单行 DOM 结构（含标题、占比胶囊、总量、费用、4 段条与底部分项脚标）。
-     */
+ * DOM 4 
+ */
     function createBreakdownItemRow() {
       const nameEl = h('strong', { className: 'cons-row-title' });
       const pctBadge = h('span', { className: 'cons-share-pill text-mono', text: '0%' });
@@ -458,8 +457,8 @@ export const ConsumptionView = defineComponent({
     }
 
     /**
-     * 增量更新热门模型或数据来源单行的指标文本与 4 段比例条宽度。
-     */
+ * 4 
+ */
     function updateBreakdownItemRow(refs, item, grandTotalTokens, showTokensInHeader = true) {
       patchText(refs.inLbl, t('cons.footInput'));
       patchText(refs.cacheLbl, t('cons.footCache'));
@@ -511,8 +510,8 @@ export const ConsumptionView = defineComponent({
     let lastRenderedUsage = '';
 
     /**
-     * 将遥测状态切片同步渲染至消费统计视图的 5 个子面板。
-     */
+ * 5 
+ */
     function renderConsumptionData(slice) {
       if (!slice) return;
       const cons = slice.consumption || {};
@@ -527,7 +526,7 @@ export const ConsumptionView = defineComponent({
       const currentMonthIdx = now.getMonth();
       const monthlyYear = cons.monthlyYear || now.getFullYear();
       const locale = i18nStore.getState().locale;
-      // 额度与会话状态也会发布遥测更新，只对用量页实际展示的数据重绘。
+      
       const signature = JSON.stringify([
         locale, slice.range, slice.customStartMs, slice.customEndMs, slice.modelDisplayMode,
         slice.showUpstreamModel, slice.orchestratorIdMode, dateSpan,
@@ -550,7 +549,7 @@ export const ConsumptionView = defineComponent({
         endPicker.setValue(draftEndMs);
       }
 
-      // 1. 同步用量概览矩阵与顶部 4 段比例条
+      // 1. 4
       patchText(dateSpanBadge, dateSpan);
       const totalTokens = Number(acct.totalTokens || 0);
       const inputTokens = Number(acct.inputTokens || 0);
@@ -573,14 +572,22 @@ export const ConsumptionView = defineComponent({
       let cachePct = 0;
       let outPct = 0;
       if (totalTokens > 0) {
-        const scaled = scaleBucketsExact(
-          { in: inputTokens, cache: cacheTokens, out: outputTokens },
-          ['in', 'cache', 'out'],
-          1000
+        const rawTenths = [
+          (inputTokens / totalTokens) * 1000,
+          (cacheTokens / totalTokens) * 1000,
+          (outputTokens / totalTokens) * 1000,
+        ];
+        const floored = rawTenths.map((v) => Math.max(0, Math.floor(v)));
+        const rem = Math.max(0, 1000 - (floored[0] + floored[1] + floored[2]));
+        const order = [0, 1, 2].sort(
+          (a, b) => rawTenths[b] - floored[b] - (rawTenths[a] - floored[a])
         );
-        inPct = +(scaled.in / 10).toFixed(1);
-        cachePct = +(scaled.cache / 10).toFixed(1);
-        outPct = +(scaled.out / 10).toFixed(1);
+        for (let k = 0; k < rem && k < 3; k++) {
+          floored[order[k]] += 1;
+        }
+        inPct = +(floored[0] / 10).toFixed(1);
+        cachePct = +(floored[1] / 10).toFixed(1);
+        outPct = +(floored[2] / 10).toFixed(1);
       }
 
       patchText(inputSharePct, `${inPct}%`);
@@ -613,7 +620,7 @@ export const ConsumptionView = defineComponent({
         thinkingTokens,
       });
 
-      // 2. 同步历史趋势交互式 SVG 面积图 / 类 GitHub 每日热力图（>90天）与粒度提示
+      // 2. SVG / GitHub >90
       const rangeBadgeText = isEnglishLocale()
         ? getConsumptionTimeRangeOptions().find((o) => o.value === slice.range)?.label ||
           t('cons.allTime')
@@ -634,7 +641,7 @@ export const ConsumptionView = defineComponent({
       );
       trendChart.update(trendSeries);
 
-      // 3. 同步热门模型列表（按最终展示名称去重归并后按总 Token 数降序排列并执行键值增量对账）
+      // 3. Token
       const localeSig = i18nStore.getState().locale;
       const displaySettings = {
         modelDisplayMode: normalizeModelDisplayMode(
@@ -663,7 +670,7 @@ export const ConsumptionView = defineComponent({
           ),
       });
 
-      // 4. 同步数据来源列表
+      
       const sources = cons.sourcesBreakdown || [];
       const sourcesTotalTok = sources.reduce((s, x) => s + Number(x.totalTokens || 0), 0);
       patchKeyedList(sourcesListEl, sources, {
@@ -673,7 +680,7 @@ export const ConsumptionView = defineComponent({
         updateRow: (refs, s) => updateBreakdownItemRow(refs, s, sourcesTotalTok, true),
       });
 
-      // 5. 同步 12 个月垂直堆叠柱状图（相对于年度峰值月缩放柱高，最低保留 8% 可视高度）
+      // 5. 12 8%
       patchText(monthlyYearBadge, String(monthlyYear));
       const monthlySeries = cons.monthlySeries || [];
       const maxMonthTokens = Math.max(

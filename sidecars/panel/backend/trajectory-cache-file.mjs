@@ -1,9 +1,45 @@
 import {
-  closeSync, fstatSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writevSync,
+  closeSync, copyFileSync, fstatSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writevSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 let lastWrite = null;
+
+function syncSleepMs(ms) {
+  if (!(ms > 0)) return;
+  try {
+    if (typeof SharedArrayBuffer === 'function' && typeof Atomics?.wait === 'function') {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      return;
+    }
+  } catch {
+    // Fallback to short busy yield if Atomics.wait is disallowed
+  }
+  const end = Date.now() + Math.min(ms, 50);
+  while (Date.now() < end) {
+    // brief spin fallback
+  }
+}
+
+function commitTempFile(temporaryPath, filePath) {
+  const retryDelays = [15, 30, 50, 80, 120];
+  for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+    try {
+      renameSync(temporaryPath, filePath);
+      return;
+    } catch (err) {
+      const code = err?.code;
+      const isTransientWinLock = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+      if (!isTransientWinLock) throw err;
+      if (attempt < retryDelays.length) {
+        syncSleepMs(retryDelays[attempt]);
+        continue;
+      }
+      copyFileSync(temporaryPath, filePath);
+      return;
+    }
+  }
+}
 
 function isSameFile(a, b) {
   return b.ino !== 0n && a.dev === b.dev && a.ino === b.ino &&
@@ -27,7 +63,7 @@ function readReusableBytes(filePath, expected) {
   }
 }
 
-// 只复用上次确认写入的步骤字节。扫描器用新数组替换变更步骤，每次仍重新序列化会话元数据。
+
 export function writeTrajectoryCacheFile(filePath, data) {
   const previous = lastWrite?.filePath === filePath ? lastWrite : null;
   const bytes = previous ? readReusableBytes(filePath, previous.file) : null;
@@ -59,7 +95,7 @@ export function writeTrajectoryCacheFile(filePath, data) {
   try {
     const fd = openSync(temporaryPath, 'wx');
     try {
-      // 按块写入，避免再复制一份完整缓存到连续缓冲区。
+      
       const batchSize = 256;
       for (let i = 0; i < parts.length; i += batchSize) {
         const batch = parts.slice(i, i + batchSize);
@@ -70,7 +106,7 @@ export function writeTrajectoryCacheFile(filePath, data) {
       closeSync(fd);
     }
     const written = statSync(temporaryPath, { bigint: true });
-    renameSync(temporaryPath, filePath);
+    commitTempFile(temporaryPath, filePath);
     const file = statSync(filePath, { bigint: true });
     lastWrite = isSameFile(written, file) ? { filePath, file, ranges } : null;
   } finally {

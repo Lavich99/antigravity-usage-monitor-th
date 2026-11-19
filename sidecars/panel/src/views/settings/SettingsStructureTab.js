@@ -1,5 +1,5 @@
 /**
- * @fileoverview Preferences Tab 2: `SettingsStructureTab.js` ("结构").
+ * @fileoverview Preferences Tab 2: `SettingsStructureTab.js` (" ").
  * Organizes the 4 structure settings panes under a dedicated 3rd-level menu bar,
  * renders live previews powered by the decoupled real UI components (`CapsuleBarWidget`,
  * `createDynamicWidgetHost` in `hover` / `overview` modes, and `StepTableWidget`)
@@ -34,6 +34,7 @@ import {
   normalizeClientOverviewModules,
   normalizeClientPopoverWidth,
   normalizeClientPopoverWidthMode,
+  normalizeClientQuotaDisplayMode,
   normalizeClientStepColumns,
   normalizeClientStepTokenComboFormat,
   normalizeClientTopbarSlots,
@@ -41,7 +42,6 @@ import {
   saveSettingsPatch,
 } from '../../store/telemetryStore.js';
 import { getVisibleMonitorView, uiStore } from '../../store/uiStore.js';
-import { BridgeStatusNotice } from '../../components/settings/BridgeStatusNotice.js';
 import { CollapsibleSection } from '../../components/settings/CollapsibleSection.js';
 import { EditableSlotList } from '../../components/settings/EditableSlotList.js';
 import { buildStructurePreviewTelemetry } from '../../components/settings/structurePreviewMock.js';
@@ -85,6 +85,13 @@ function getEnableToggleOptions() {
   ];
 }
 
+function getQuotaDisplayModeOptions() {
+  return [
+    { value: 'left', label: t('settings.str.quotaModeLeft') },
+    { value: 'used', label: t('settings.str.quotaModeUsed') },
+  ];
+}
+
 function getPopoverWidthModeOptions() {
   return [
     { value: 'auto', label: t('settings.str.popoverWidthAuto') },
@@ -104,24 +111,24 @@ export const SettingsStructureTab = defineComponent({
   name: 'SettingsStructureTab',
   setup({ props, onCleanup }) {
     let activeThirdTab = normalizeStructureTabKey(uiStore.getState().settingsStructureTab);
-    let draftWindowMountMode = 'dual';
+    let draftWindowMountMode = 'composer';
+    let draftMoveComposerPermLeft = true;
     let draftPopoverWidthMode = 'auto';
     let draftPopoverWidth = DEFAULT_CLIENT_POPOVER_WIDTH;
-    let draftEnableCliStatusLine = true;
-    let draftShowTopbarMulti = true;
+    let draftEnableCliStatusLine = false;
+    let draftShowTopbarMulti = false;
+    let draftQuotaDisplayMode = 'left';
     let draftTopbarSlots = [...DEFAULT_CLIENT_TOPBAR_SLOTS];
     let draftHoverModules = [...DEFAULT_CLIENT_HOVER_MODULES];
     let draftOverviewModules = [...DEFAULT_CLIENT_OVERVIEW_MODULES];
     let draftOverviewMetrics = [...DEFAULT_CLIENT_OVERVIEW_METRICS];
-    let draftShowStepTurnRail = false;
+    let draftShowStepTurnRail = true;
     let draftShowStepAgentBadge = true;
-    let draftShowStepSpeedColor = false;
+    let draftShowStepSpeedColor = true;
     let draftStepTokenComboFormat = DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT;
     let rawStepTokenComboText = DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT;
     let draftStepColumns = [...DEFAULT_CLIENT_STEP_COLUMNS];
     let latestSettings = null;
-    let latestWindowBridge = null;
-    let latestHostPlatform = 'win32';
 
     function isStructureVisible() {
       const st = uiStore.getState();
@@ -136,6 +143,7 @@ export const SettingsStructureTab = defineComponent({
         popoverWidth: draftPopoverWidth,
         enableCliStatusLine: draftEnableCliStatusLine,
         showTopbarMultiSession: draftShowTopbarMulti,
+        quotaDisplayMode: draftQuotaDisplayMode,
         topbarCapsuleSlots: draftTopbarSlots,
         hoverModules: draftHoverModules,
         overviewModules: draftOverviewModules,
@@ -200,7 +208,7 @@ export const SettingsStructureTab = defineComponent({
       thirdNavBtns
     );
 
-    // --- Pane 1: 挂载与胶囊栏 (`mount`) ---
+    // --- Pane 1: (`mount`) ---
     const capsulePreviewWidget = CapsuleBarWidget({});
     const mountPreviewCanvas = h('div', { className: 'structure-preview-canvas' }, [
       capsulePreviewWidget.el,
@@ -209,6 +217,10 @@ export const SettingsStructureTab = defineComponent({
     const mountModeLabelEl = h('span', {
       className: 'form-label',
       text: t('settings.str.mountMode'),
+    });
+    const composerPermLeftLabelEl = h('span', {
+      className: 'form-label',
+      text: t('settings.str.composerPermLeftToggle'),
     });
     const popoverWidthLabelEl = h('span', {
       className: 'form-label',
@@ -225,6 +237,10 @@ export const SettingsStructureTab = defineComponent({
     const cliCapsuleLabelEl = h('span', {
       className: 'form-label',
       text: t('settings.str.cliCapsuleToggle'),
+    });
+    const quotaDisplayModeLabelEl = h('span', {
+      className: 'form-label',
+      text: t('settings.str.quotaDisplayModeLabel'),
     });
     const capsuleSlotsLabelEl = h('span', {
       className: 'form-label',
@@ -312,11 +328,44 @@ export const SettingsStructureTab = defineComponent({
       },
     });
 
+    const composerPermLeftToggle = SegmentedControl({
+      ariaLabel: t('settings.str.composerPermLeftToggle'),
+      modelValue: 'off',
+      options: getEnableToggleOptions(),
+      onUpdateModelValue: (val) => {
+        draftMoveComposerPermLeft = val !== 'off';
+        syncMountSectionMeta();
+        props.onLayoutChange?.();
+        void persistStructurePatch(mountSection, {
+          moveComposerPermissionLeft: draftMoveComposerPermLeft,
+        });
+      },
+    });
+
+    const composerPermLeftRow = h('div', { className: 'settings-inline-row' }, [
+      composerPermLeftLabelEl,
+      composerPermLeftToggle.el,
+    ]);
+
+    const quotaDisplayModeToggle = SegmentedControl({
+      ariaLabel: t('settings.str.quotaDisplayModeLabel'),
+      modelValue: draftQuotaDisplayMode,
+      options: getQuotaDisplayModeOptions(),
+      onUpdateModelValue: (val) => {
+        draftQuotaDisplayMode = normalizeClientQuotaDisplayMode(val);
+        syncMountSectionMeta();
+        props.onLayoutChange?.();
+        void persistStructurePatch(mountSection, {
+          quotaDisplayMode: draftQuotaDisplayMode,
+        });
+      },
+    });
+
     const topbarSlotsList = EditableSlotList({
       items: draftTopbarSlots,
       options: getCapsuleMetricOptions(),
       minItems: 1,
-      maxItems: 5,
+      maxItems: 2,
       addBtnTextFn: (count, max) => t('settings.str.addCapsuleSlot', { count, max }),
       onPreview: (previewItems) => {
         draftTopbarSlots = normalizeClientTopbarSlots(previewItems);
@@ -332,32 +381,34 @@ export const SettingsStructureTab = defineComponent({
       },
     });
 
-    const mountBridgeNotice = BridgeStatusNotice({});
-
     const mountSection = CollapsibleSection({
       collapsible: false,
       icon: 'dock',
       title: t('settings.str.mountSection'),
       badgeText: t('settings.str.mountBadge', { count: draftTopbarSlots.length }),
       onReset: () => {
-        draftWindowMountMode = 'dual';
+        draftWindowMountMode = 'composer';
+        draftMoveComposerPermLeft = true;
         draftPopoverWidthMode = 'auto';
         draftPopoverWidth = DEFAULT_CLIENT_POPOVER_WIDTH;
         popoverWidthStepper.setProps({ modelValue: DEFAULT_CLIENT_POPOVER_WIDTH });
-        draftEnableCliStatusLine = true;
-        draftShowTopbarMulti = true;
+        draftEnableCliStatusLine = false;
+        draftShowTopbarMulti = false;
+        draftQuotaDisplayMode = 'left';
         draftTopbarSlots = [...DEFAULT_CLIENT_TOPBAR_SLOTS];
         syncMountSectionMeta();
         props.onLayoutChange?.();
         void persistStructurePatch(
           mountSection,
           {
-            windowMountMode: 'dual',
+            windowMountMode: 'composer',
             enableWindowOverlay: true,
+            moveComposerPermissionLeft: true,
             popoverWidthMode: 'auto',
             popoverWidth: DEFAULT_CLIENT_POPOVER_WIDTH,
-            enableCliStatusLine: true,
-            showTopbarMultiSession: true,
+            enableCliStatusLine: false,
+            showTopbarMultiSession: false,
+            quotaDisplayMode: 'left',
             topbarCapsuleSlots: [...DEFAULT_CLIENT_TOPBAR_SLOTS],
           },
           'settings.resetDone'
@@ -367,7 +418,7 @@ export const SettingsStructureTab = defineComponent({
         mountPreviewCanvas,
         h('div', { className: 'settings-divider' }),
         h('div', { className: 'form-row' }, [mountModeLabelEl, windowMountSelect.el]),
-        mountBridgeNotice.el,
+        composerPermLeftRow,
         h('div', { className: 'form-row' }, [
           h('div', { className: 'settings-inline-row' }, [
             popoverWidthLabelEl,
@@ -386,6 +437,10 @@ export const SettingsStructureTab = defineComponent({
           cliCapsuleLabelEl,
           cliCapsuleToggle.el,
         ]),
+        h('div', { className: 'settings-inline-row' }, [
+          quotaDisplayModeLabelEl,
+          quotaDisplayModeToggle.el,
+        ]),
         h('div', { className: 'form-row' }, [capsuleSlotsLabelEl, topbarSlotsList.el]),
       ],
     });
@@ -400,11 +455,12 @@ export const SettingsStructureTab = defineComponent({
         modelValue: draftWindowMountMode,
         options: getMountModeOptions(),
       });
-      mountBridgeNotice.refs.update({
-        visible: draftWindowMountMode !== 'sidebar',
-        windowBridge: latestWindowBridge,
-        hostPlatform: latestHostPlatform,
+      composerPermLeftToggle.setProps({
+        modelValue: draftMoveComposerPermLeft ? 'on' : 'off',
+        options: getEnableToggleOptions(),
+        ariaLabel: t('settings.str.composerPermLeftToggle'),
       });
+      patchAttr(composerPermLeftRow, 'hidden', draftWindowMountMode !== 'composer');
       popoverWidthModeToggle.setProps({
         modelValue: draftPopoverWidthMode,
         options: getPopoverWidthModeOptions(),
@@ -424,6 +480,11 @@ export const SettingsStructureTab = defineComponent({
         modelValue: draftEnableCliStatusLine ? 'on' : 'off',
         options: getEnableToggleOptions(),
       });
+      quotaDisplayModeToggle.setProps({
+        modelValue: draftQuotaDisplayMode,
+        options: getQuotaDisplayModeOptions(),
+        ariaLabel: t('settings.str.quotaDisplayModeLabel'),
+      });
       topbarSlotsList.refs.setProps({
         items: draftTopbarSlots,
         options: getCapsuleMetricOptions(),
@@ -433,17 +494,19 @@ export const SettingsStructureTab = defineComponent({
         t('settings.str.mountBadge', { count: draftTopbarSlots.length })
       );
       const isDefault =
-        draftWindowMountMode === 'dual' &&
+        draftWindowMountMode === 'composer' &&
+        draftMoveComposerPermLeft === true &&
         draftPopoverWidthMode === 'auto' &&
         draftPopoverWidth === DEFAULT_CLIENT_POPOVER_WIDTH &&
-        draftEnableCliStatusLine === true &&
-        draftShowTopbarMulti === true &&
+        draftEnableCliStatusLine === false &&
+        draftShowTopbarMulti === false &&
+        draftQuotaDisplayMode === 'left' &&
         isSameList(draftTopbarSlots, DEFAULT_CLIENT_TOPBAR_SLOTS);
       mountSection.refs.setResetDisabled(isDefault);
       refreshMountPreview();
     }
 
-    // --- Pane 2: 鼠标悬浮窗 (`hover`) ---
+    // --- Pane 2: (`hover`) ---
     const hoverWidgetsContainerEl = h('div', { className: 'wm-hover-widgets' });
     const hoverPreviewTipEl = h('div', { className: 'wm-hover-tip is-preview' }, [
       hoverWidgetsContainerEl,
@@ -460,7 +523,7 @@ export const SettingsStructureTab = defineComponent({
       isVisibleFn: () => isStructureVisible() && activeThirdTab === 'hover',
       initialModuleKeys: [],
     });
-    const hoverPreviewCanvas = h('div', { className: 'structure-preview-canvas' }, [
+    const hoverPreviewCanvas = h('div', { className: 'structure-preview-canvas is-scaled' }, [
       hoverPreviewTipEl,
       hoverPreviewEmptyEl,
     ]);
@@ -543,7 +606,7 @@ export const SettingsStructureTab = defineComponent({
       refreshHoverPreview();
     }
 
-    // --- Pane 3: 实时监控布局 (`overview`) ---
+    // --- Pane 3: (`overview`) ---
     const overviewPreviewContainerEl = h('div', { className: 'overview-modules-host is-preview' });
     const overviewPreviewHost = createDynamicWidgetHost({
       containerEl: overviewPreviewContainerEl,
@@ -552,7 +615,7 @@ export const SettingsStructureTab = defineComponent({
       isVisibleFn: () => isStructureVisible() && activeThirdTab === 'overview',
       initialModuleKeys: [],
     });
-    const overviewPreviewCanvas = h('div', { className: 'structure-preview-canvas' }, [
+    const overviewPreviewCanvas = h('div', { className: 'structure-preview-canvas is-scaled' }, [
       overviewPreviewContainerEl,
     ]);
 
@@ -680,7 +743,7 @@ export const SettingsStructureTab = defineComponent({
       refreshOverviewPreview();
     }
 
-    // --- Pane 4: 调用明细字段 (`steps`) ---
+    // --- Pane 4: (`steps`) ---
     const stepTablePreview = StepTableWidget({
       standalone: true,
       interactiveBadges: false,
@@ -811,7 +874,7 @@ export const SettingsStructureTab = defineComponent({
       items: draftStepColumns,
       options: getStepColumnOptions(draftStepTokenComboFormat),
       minItems: 2,
-      maxItems: 14,
+      maxItems: 15,
       addBtnTextFn: (count, max) => t('settings.str.addStepCol', { count, max }),
       onPreview: (previewItems) => {
         draftStepColumns = normalizeClientStepColumns(previewItems);
@@ -833,9 +896,9 @@ export const SettingsStructureTab = defineComponent({
       title: t('settings.str.stepsSection'),
       badgeText: t('settings.str.stepsBadge', { count: draftStepColumns.length }),
       onReset: () => {
-        draftShowStepTurnRail = false;
+        draftShowStepTurnRail = true;
         draftShowStepAgentBadge = true;
-        draftShowStepSpeedColor = false;
+        draftShowStepSpeedColor = true;
         draftStepTokenComboFormat = DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT;
         rawStepTokenComboText = DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT;
         stepTokenComboInput.value = DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT;
@@ -845,9 +908,9 @@ export const SettingsStructureTab = defineComponent({
         void persistStructurePatch(
           stepsSection,
           {
-            showStepTurnRail: false,
+            showStepTurnRail: true,
             showStepAgentBadge: true,
-            showStepSpeedColor: false,
+            showStepSpeedColor: true,
             stepTokenComboFormat: DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT,
             stepTableColumns: [...DEFAULT_CLIENT_STEP_COLUMNS],
           },
@@ -936,9 +999,9 @@ export const SettingsStructureTab = defineComponent({
       });
       stepsSection.refs.setBadge(t('settings.str.stepsBadge', { count: draftStepColumns.length }));
       const isDefault =
-        draftShowStepTurnRail === false &&
+        draftShowStepTurnRail === true &&
         draftShowStepAgentBadge === true &&
-        draftShowStepSpeedColor === false &&
+        draftShowStepSpeedColor === true &&
         draftStepTokenComboFormat === DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT &&
         isSameList(draftStepColumns, DEFAULT_CLIENT_STEP_COLUMNS);
       stepsSection.refs.setResetDisabled(isDefault);
@@ -994,23 +1057,19 @@ export const SettingsStructureTab = defineComponent({
       stepsSection.el,
     ]);
 
-    function renderSettings(
-      settings,
-      windowBridge = latestWindowBridge,
-      hostPlatform = latestHostPlatform
-    ) {
+    function renderSettings(settings) {
       if (!settings) return;
       latestSettings = settings;
-      if (windowBridge !== undefined) latestWindowBridge = windowBridge;
-      if (hostPlatform) latestHostPlatform = hostPlatform;
       draftWindowMountMode = normalizeClientWindowMountMode(
         settings.windowMountMode,
         settings.enableWindowOverlay
       );
+      draftMoveComposerPermLeft = settings.moveComposerPermissionLeft === true;
       draftPopoverWidthMode = normalizeClientPopoverWidthMode(settings.popoverWidthMode);
       draftPopoverWidth = normalizeClientPopoverWidth(settings.popoverWidth);
       draftEnableCliStatusLine = settings.enableCliStatusLine !== false;
       draftShowTopbarMulti = settings.showTopbarMultiSession !== false;
+      draftQuotaDisplayMode = normalizeClientQuotaDisplayMode(settings.quotaDisplayMode);
       draftTopbarSlots = normalizeClientTopbarSlots(settings.topbarCapsuleSlots);
       draftHoverModules = normalizeClientHoverModules(settings.hoverModules);
       draftOverviewModules = normalizeClientOverviewModules(settings.overviewModules);
@@ -1039,11 +1098,14 @@ export const SettingsStructureTab = defineComponent({
       mountSection.refs.setTitle(t('settings.str.mountSection'));
       mountSection.refs.setResetLabel(t('settings.resetBtn'));
       patchText(mountModeLabelEl, t('settings.str.mountMode'));
+      patchText(composerPermLeftLabelEl, t('settings.str.composerPermLeftToggle'));
+      composerPermLeftToggle.setProps({ ariaLabel: t('settings.str.composerPermLeftToggle') });
       patchText(popoverWidthLabelEl, t('settings.str.popoverWidthLabel'));
       patchText(popoverWidthHintEl, t('settings.str.popoverWidthHint'));
       popoverWidthStepper.setProps({ ariaLabel: t('settings.str.popoverWidthLabel') });
       patchText(multiToggleLabelEl, t('settings.str.multiToggle'));
       patchText(cliCapsuleLabelEl, t('settings.str.cliCapsuleToggle'));
+      patchText(quotaDisplayModeLabelEl, t('settings.str.quotaDisplayModeLabel'));
       patchText(capsuleSlotsLabelEl, t('settings.str.capsuleSlotsLabel'));
 
       hoverSection.refs.setTitle(t('settings.str.hoverSection'));
@@ -1104,7 +1166,6 @@ export const SettingsStructureTab = defineComponent({
 
     onCleanup(() => {
       unsubUi();
-      mountBridgeNotice.destroy();
       capsulePreviewWidget.destroy();
       hoverPreviewHost.destroy();
       overviewPreviewHost.destroy();
@@ -1114,6 +1175,7 @@ export const SettingsStructureTab = defineComponent({
       popoverWidthModeToggle.destroy();
       multiSessionToggle.destroy();
       cliCapsuleToggle.destroy();
+      quotaDisplayModeToggle.destroy();
       topbarSlotsList.destroy();
       hoverModulesList.destroy();
       overviewModulesList.destroy();
@@ -1133,7 +1195,6 @@ export const SettingsStructureTab = defineComponent({
       refs: {
         thirdNavBar,
         capsulePreviewWidget,
-        mountBridgeNotice,
         hoverPreviewHost,
         overviewPreviewHost,
         stepTablePreview,

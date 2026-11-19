@@ -5,53 +5,16 @@
 
 import { createReactiveStore } from '../core/reactive.js';
 import { callSidecarApi, getWindowBridgeConfig, isWindowOverlayMode } from '../core/httpClient.js';
-import {
-  formatAgentBadgeText,
-  formatAgentLabel,
-  formatLiveActivityDetail,
-  formatLiveActivityLabel,
-  getAgentBadgeClass,
-} from '../core/formatters.js';
-import { normalizeI18nLanguage, t } from '../i18n/index.js';
+import { isEnglishLocale, normalizeI18nLanguage, t } from '../i18n/index.js';
 import { normalizeClientFontScale, normalizeClientThemeAccent } from '../core/appearance.js';
-import {
-  DEFAULT_HOVER_MODULES,
-  DEFAULT_OVERVIEW_METRICS,
-  DEFAULT_OVERVIEW_MODULES,
-  DEFAULT_POPOVER_WIDTH,
-  DEFAULT_STEP_TABLE_COLUMNS,
-  DEFAULT_STEP_TOKEN_COMBO_FORMAT,
-  DEFAULT_TOPBAR_SLOTS,
-  MAX_POPOVER_WIDTH,
-  MIN_POPOVER_WIDTH,
-  OVERVIEW_METRIC_KEYS,
-  OVERVIEW_MODULE_KEYS,
-  STEP_TABLE_COLUMN_KEYS,
-  TOPBAR_SLOT_KEYS,
-  normalizeHoverModules,
-  normalizeModelDisplayMode,
-  normalizeOrchestratorIdMode,
-  normalizeOverviewMetrics,
-  normalizeOverviewModules,
-  normalizePluginUpdateMode,
-  normalizePopoverWidth,
-  normalizePopoverWidthMode,
-  normalizeStepTableColumns,
-  normalizeStepTokenComboFormat,
-  normalizeTopbarCapsuleSlots,
-  normalizeWeeklyLimitMode,
-  normalizeWindowMountMode,
-  parseStepTokenComboSegments,
-} from '../../shared/settings-normalization.mjs';
-import { WINDOW_BRIDGE_ROUTE_KEY, readInjectedWindowBridge } from '../../shared/window-bridge-protocol.mjs';
 
 const CASCADE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * 在主窗口双栖模式下，提取当前正在浏览的会话 ID：
- * 1. 优先解析 Antigravity 2.0 路由路径 `/c/<uuid>`；
- * 2. 在 Antigravity IDE (`workbench.html`) 无路径路由时，回退读取活跃对话视图
- *    `[data-testid="conversation-view"][data-cascade-id]` 或侧栏选中项。
+ * ID 
+ * 1. Antigravity 2.0 `/c/<uuid>` 
+ * 2. Antigravity IDE (`workbench.html`) 
+ * `[data-testid="conversation-view"][data-cascade-id]` 
  *
  * @returns {string}
  */
@@ -62,7 +25,7 @@ export function extractHostRouteCascadeId() {
   if (m && CASCADE_UUID_RE.test(m[1])) {
     return m[1];
   }
-  const extBridgeRouteId = String(readInjectedWindowBridge()?.[WINDOW_BRIDGE_ROUTE_KEY] || '').trim();
+  const extBridgeRouteId = String(window.__AGUsageMonitorBridge?.hostRouteCascadeId || '').trim();
   if (extBridgeRouteId && CASCADE_UUID_RE.test(extBridgeRouteId)) {
     return extBridgeRouteId;
   }
@@ -109,11 +72,17 @@ export function extractHostRouteCascadeId() {
     if (CASCADE_UUID_RE.test(singleViewId)) {
       return singleViewId;
     }
+    const isDesktopNewChatRoute =
+      /^\/(?:new)?\/?$/i.test(pathname) &&
+      !document.querySelector?.('.monaco-workbench');
+    if (isDesktopNewChatRoute) {
+      return '__new__';
+    }
     if (CASCADE_UUID_RE.test(selectedRowId)) {
       return selectedRowId;
     }
   } catch {
-    // 忽略宿主 DOM 查询异常
+    // DOM
   }
   return '';
 }
@@ -143,36 +112,325 @@ let lastReceivedSteps = null;
 let loopActive = false;
 let loopIntervalMs = 2000;
 let loopTickFn = null;
+let loopResolveDelayFn = null;
 
-export const CLIENT_TOPBAR_SLOT_KEYS = TOPBAR_SLOT_KEYS;
-export const DEFAULT_CLIENT_TOPBAR_SLOTS = DEFAULT_TOPBAR_SLOTS;
-export const CLIENT_OVERVIEW_MODULE_KEYS = OVERVIEW_MODULE_KEYS;
-export const DEFAULT_CLIENT_OVERVIEW_MODULES = DEFAULT_OVERVIEW_MODULES;
-export const DEFAULT_CLIENT_HOVER_MODULES = DEFAULT_HOVER_MODULES;
-export const CLIENT_OVERVIEW_METRIC_KEYS = OVERVIEW_METRIC_KEYS;
-export const DEFAULT_CLIENT_OVERVIEW_METRICS = DEFAULT_OVERVIEW_METRICS;
-export const CLIENT_STEP_COLUMN_KEYS = STEP_TABLE_COLUMN_KEYS;
-export const DEFAULT_CLIENT_STEP_COLUMNS = DEFAULT_STEP_TABLE_COLUMNS;
-export const DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT = DEFAULT_STEP_TOKEN_COMBO_FORMAT;
-export const MIN_CLIENT_POPOVER_WIDTH = MIN_POPOVER_WIDTH;
-export const MAX_CLIENT_POPOVER_WIDTH = MAX_POPOVER_WIDTH;
-export const DEFAULT_CLIENT_POPOVER_WIDTH = DEFAULT_POPOVER_WIDTH;
+export const ADAPTIVE_POLL_ACTIVE_MS = 700;
+export const ADAPTIVE_POLL_IDLE_MS = 2000;
+export const ADAPTIVE_POLL_HIDDEN_MS = 8000;
 
-export const parseClientStepTokenComboSegments = parseStepTokenComboSegments;
-export const normalizeClientStepTokenComboFormat = normalizeStepTokenComboFormat;
-export const normalizeClientPopoverWidthMode = normalizePopoverWidthMode;
-export const normalizeClientPopoverWidth = normalizePopoverWidth;
-export const normalizeClientModelDisplayMode = normalizeModelDisplayMode;
-export const normalizeClientTopbarSlots = normalizeTopbarCapsuleSlots;
-export const normalizeClientHoverModules = normalizeHoverModules;
-export const normalizeClientOverviewModules = normalizeOverviewModules;
-export const normalizeClientOverviewMetrics = normalizeOverviewMetrics;
-export const normalizeClientStepColumns = normalizeStepTableColumns;
-export const normalizeClientUpdateMode = normalizePluginUpdateMode;
-export const normalizeClientOrchestratorIdMode = normalizeOrchestratorIdMode;
-export const normalizeClientWindowMountMode = normalizeWindowMountMode;
+export function resolveAdaptivePollDelayMs(telemetry, idleMs = ADAPTIVE_POLL_IDLE_MS, isHidden = false) {
+  const safeIdle =
+    Number.isFinite(Number(idleMs)) && Number(idleMs) >= 500
+      ? Number(idleMs)
+      : ADAPTIVE_POLL_IDLE_MS;
+  if (isHidden) {
+    return Math.max(safeIdle, ADAPTIVE_POLL_HIDDEN_MS);
+  }
+  const activeConv = telemetry?.activeConversation;
+  const hasRunning =
+    Boolean(activeConv?.isRunning) ||
+    Boolean(activeConv?.aggregated?.isRunning) ||
+    (Array.isArray(telemetry?.runningConversations) &&
+      telemetry.runningConversations.some((c) => Boolean(c?.isRunning)));
+  return hasRunning ? Math.min(safeIdle, ADAPTIVE_POLL_ACTIVE_MS) : safeIdle;
+}
 
-export function isEquivalentTelemetry(prev, next) {
+export const CLIENT_TOPBAR_SLOT_KEYS = Object.freeze([
+  'context',
+  'tps',
+  'ttft',
+  'avg_tps',
+  'cost',
+  'session_cost',
+  'cache_hit',
+  'session_tokens',
+  'quota_auto',
+  'gemini_5h',
+  'gemini_weekly',
+  'claude_5h',
+  'claude_weekly',
+]);
+
+export const DEFAULT_CLIENT_TOPBAR_SLOTS = Object.freeze(['gemini_5h', 'context']);
+
+export const CLIENT_OVERVIEW_MODULE_KEYS = Object.freeze([
+  'metrics',
+  'context',
+  'quotas',
+  'live_tasks',
+]);
+
+export const DEFAULT_CLIENT_OVERVIEW_MODULES = Object.freeze([
+  'metrics',
+  'context',
+  'quotas',
+  'live_tasks',
+]);
+
+export const DEFAULT_CLIENT_HOVER_MODULES = Object.freeze(['context', 'quotas']);
+
+export const CLIENT_OVERVIEW_METRIC_KEYS = Object.freeze([
+  'tps',
+  'ttft',
+  'avg_tps',
+  'step_cost',
+  'session_cost',
+  'cache_hit',
+  'session_tokens',
+  'context_usage',
+  'quota_tightest',
+]);
+
+export const DEFAULT_CLIENT_OVERVIEW_METRICS = Object.freeze([
+  'tps',
+  'ttft',
+  'avg_tps',
+  'step_cost',
+]);
+
+export const CLIENT_STEP_COLUMN_KEYS = Object.freeze([
+  'step',
+  'time',
+  'model',
+  'tps',
+  'ttft',
+  'duration',
+  'tokens_combo',
+  'tokens_io_cache',
+  'tokens_custom',
+  'input_tokens',
+  'cache_tokens',
+  'output_tokens',
+  'cache',
+  'cost',
+]);
+
+export const DEFAULT_CLIENT_STEP_COLUMNS = Object.freeze([
+  'step',
+  'model',
+  'tps',
+  'tokens_combo',
+  'cache',
+  'cost',
+]);
+
+export const DEFAULT_CLIENT_STEP_TOKEN_COMBO_FORMAT = 'context:in:cache';
+
+const CLIENT_STEP_TOKEN_ALIASES = Object.freeze({
+  context: 'context',
+  ctx: 'context',
+  in: 'in',
+  new: 'in',
+  input: 'in',
+  out: 'out',
+  output: 'out',
+  cache: 'cache',
+  cached: 'cache',
+  cache_read: 'cache',
+  cacheread: 'cache',
+  think: 'think',
+  thinking: 'think',
+  reply: 'reply',
+  body: 'reply',
+  resp: 'reply',
+  response: 'reply',
+  text: 'reply',
+  total: 'total',
+  all: 'total',
+  sum: 'total',
+});
+
+export function parseClientStepTokenComboSegments(raw) {
+  const str = String(raw ?? '').trim();
+  const out = [];
+  const seen = new Set();
+  if (str) {
+    for (const part of str.split(/[:/,|]+/)) {
+      const key = part.trim().toLowerCase();
+      if (!key) continue;
+      const mapped = Object.prototype.hasOwnProperty.call(CLIENT_STEP_TOKEN_ALIASES, key)
+        ? CLIENT_STEP_TOKEN_ALIASES[key]
+        : null;
+      if (!mapped || seen.has(mapped)) continue;
+      seen.add(mapped);
+      out.push(mapped);
+      if (out.length >= 4) break;
+    }
+  }
+  return out.length > 0 ? out : ['context', 'in', 'cache'];
+}
+
+export function normalizeClientStepTokenComboFormat(raw) {
+  return parseClientStepTokenComboSegments(raw).join(':');
+}
+
+export const MIN_CLIENT_POPOVER_WIDTH = 440;
+export const MAX_CLIENT_POPOVER_WIDTH = 1080;
+export const DEFAULT_CLIENT_POPOVER_WIDTH = 550;
+
+export function normalizeClientPopoverWidthMode(mode) {
+  const m = String(mode ?? '').trim().toLowerCase();
+  return m === 'custom' || m === 'fixed' ? 'custom' : 'auto';
+}
+
+export function normalizeClientQuotaDisplayMode(mode) {
+  const m = String(mode ?? '').trim().toLowerCase();
+  return m === 'used' ? 'used' : 'left';
+}
+
+export function normalizeClientPopoverWidth(width) {
+  const num = Number(width);
+  if (!Number.isFinite(num) || num <= 0) return DEFAULT_CLIENT_POPOVER_WIDTH;
+  return Math.max(MIN_CLIENT_POPOVER_WIDTH, Math.min(MAX_CLIENT_POPOVER_WIDTH, Math.round(num)));
+}
+
+export function normalizeClientModelDisplayMode(mode, legacyShowUpstream) {
+  const m = String(mode ?? '').trim().toLowerCase();
+  if (m === 'upstream' || m === 'raw' || m === 'full') return 'upstream';
+  if (m === 'upstream_compact' || m === 'compact_upstream' || m === 'trimmed') {
+    return 'upstream_compact';
+  }
+  if (m === 'short') return 'short';
+  if (legacyShowUpstream === true) return 'upstream';
+  return 'short';
+}
+
+function normalizeClientOrderedList(raw, { allowedKeys, defaultItems, minLen, maxLen }) {
+  if (!Array.isArray(raw)) {
+    return [...defaultItems];
+  }
+  const allowedSet = new Set(allowedKeys);
+  const seen = new Set();
+  const out = [];
+  for (const item of raw) {
+    const key = String(item ?? '').trim();
+    if (!key || key === 'none' || !allowedSet.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+    if (out.length >= maxLen) break;
+  }
+  if (out.length < minLen) {
+    for (const fallbackKey of [...defaultItems, ...allowedKeys]) {
+      if (!seen.has(fallbackKey) && allowedSet.has(fallbackKey)) {
+        seen.add(fallbackKey);
+        out.push(fallbackKey);
+        if (out.length >= minLen) break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 1..5 `'none'` 
+ *
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeClientTopbarSlots(raw) {
+  return normalizeClientOrderedList(raw, {
+    allowedKeys: CLIENT_TOPBAR_SLOT_KEYS,
+    defaultItems: DEFAULT_CLIENT_TOPBAR_SLOTS,
+    minLen: 1,
+    maxLen: 2,
+  });
+}
+
+/**
+ * 0..4 `0` 
+ *
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeClientHoverModules(raw) {
+  return normalizeClientOrderedList(raw, {
+    allowedKeys: CLIENT_OVERVIEW_MODULE_KEYS,
+    defaultItems: DEFAULT_CLIENT_HOVER_MODULES,
+    minLen: 0,
+    maxLen: 4,
+  });
+}
+
+/**
+ * 1..4 
+ *
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeClientOverviewModules(raw) {
+  return normalizeClientOrderedList(raw, {
+    allowedKeys: CLIENT_OVERVIEW_MODULE_KEYS,
+    defaultItems: DEFAULT_CLIENT_OVERVIEW_MODULES,
+    minLen: 1,
+    maxLen: 4,
+  });
+}
+
+/**
+ * 1..4 
+ *
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeClientOverviewMetrics(raw) {
+  return normalizeClientOrderedList(raw, {
+    allowedKeys: CLIENT_OVERVIEW_METRIC_KEYS,
+    defaultItems: DEFAULT_CLIENT_OVERVIEW_METRICS,
+    minLen: 1,
+    maxLen: 4,
+  });
+}
+
+/**
+ * 2..12 
+ *
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+export function normalizeClientStepColumns(raw) {
+  return normalizeClientOrderedList(raw, {
+    allowedKeys: CLIENT_STEP_COLUMN_KEYS,
+    defaultItems: DEFAULT_CLIENT_STEP_COLUMNS,
+    minLen: 2,
+    maxLen: CLIENT_STEP_COLUMN_KEYS.length,
+  });
+}
+
+/**
+ * `'off'` | `'manual'` | `'auto'` 
+ *
+ * @param {unknown} mode
+ * @param {unknown} [legacyAutoUpdate]
+ * @returns {'off'|'manual'|'auto'}
+ */
+export function normalizeClientUpdateMode(mode, legacyAutoUpdate) {
+  const m = String(mode ?? '').trim().toLowerCase();
+  if (m === 'off' || m === 'manual' || m === 'auto') return m;
+  if (legacyAutoUpdate === true) return 'auto';
+  return 'off';
+}
+
+export function normalizeClientOrchestratorIdMode(mode) {
+  return String(mode ?? '').trim().toLowerCase() === 'full' ? 'full' : 'compact';
+}
+
+/**
+ * `'dual'` | `'composer'` | `'sidebar'` `enableWindowOverlay` 
+ *
+ * @param {unknown} mode
+ * @param {unknown} [legacyEnableOverlay]
+ * @returns {'dual'|'composer'|'sidebar'}
+ */
+export function normalizeClientWindowMountMode(mode, legacyEnableOverlay) {
+  const m = String(mode ?? '').trim().toLowerCase();
+  if (m === 'composer' || m === 'input') return 'composer';
+  if (m === 'sidebar' || m === 'off') return 'sidebar';
+  if (m === 'dual' || m === 'topbar') return 'dual';
+  if (legacyEnableOverlay === false) return 'sidebar';
+  return 'composer';
+}
+
+function isEquivalentTelemetry(prev, next) {
   if (!prev || !next) return false;
   if (prev === next) return true;
 
@@ -185,16 +443,24 @@ export function isEquivalentTelemetry(prev, next) {
     }
     return true;
   };
-  // 1. 比对系统设置项（外观语言/主题/字号、模型显示策略、更新策略、挂载与结构布局配置）
+  const normMount = (mode, legacyEnableOverlay) => {
+    const m = String(mode ?? '').trim().toLowerCase();
+    if (m === 'composer' || m === 'input') return 'composer';
+    if (m === 'sidebar' || m === 'off') return 'sidebar';
+    if (m === 'dual' || m === 'topbar') return 'dual';
+    if (legacyEnableOverlay === false) return 'sidebar';
+    return 'composer';
+  };
+
+  // 1. / /
   const pAct = prev.activeConversation;
   const nAct = next.activeConversation;
   const pSet = prev.settings;
   const nSet = next.settings;
 
-  if ((pSet?.language ?? 'zh-CN') !== (nSet?.language ?? 'zh-CN')) return false;
+  if ((pSet?.language ?? 'th-TH') !== (nSet?.language ?? 'th-TH')) return false;
   if ((pSet?.themeAccent ?? 'host') !== (nSet?.themeAccent ?? 'host')) return false;
-  if ((pSet?.fontScale ?? 'md') !== (nSet?.fontScale ?? 'md')) return false;
-  if ((prev.hostPlatform || '') !== (next.hostPlatform || '')) return false;
+  if ((pSet?.fontScale ?? 'sm') !== (nSet?.fontScale ?? 'sm')) return false;
   if (Boolean(pSet?.contextWindowRiskAccepted) !== Boolean(nSet?.contextWindowRiskAccepted)) {
     return false;
   }
@@ -204,29 +470,51 @@ export function isEquivalentTelemetry(prev, next) {
   ) {
     return false;
   }
+  const normModelMode = (mode, legacyShowUpstream) => {
+    const m = String(mode ?? '').trim().toLowerCase();
+    if (m === 'upstream' || m === 'raw' || m === 'full') return 'upstream';
+    if (m === 'upstream_compact' || m === 'compact_upstream' || m === 'trimmed') {
+      return 'upstream_compact';
+    }
+    if (m === 'short') return 'short';
+    return legacyShowUpstream === true ? 'upstream' : 'short';
+  };
+  const normPopMode = (mode) => {
+    const m = String(mode ?? '').trim().toLowerCase();
+    return m === 'custom' || m === 'fixed' ? 'custom' : 'auto';
+  };
+  const normPopW = (w) => {
+    const n = Number(w);
+    return Number.isFinite(n) && n > 0 ? Math.max(440, Math.min(1080, Math.round(n))) : 550;
+  };
   if (
-    normalizeModelDisplayMode(pSet?.modelDisplayMode, pSet?.showUpstreamModel) !==
-    normalizeModelDisplayMode(nSet?.modelDisplayMode, nSet?.showUpstreamModel)
+    normModelMode(pSet?.modelDisplayMode, pSet?.showUpstreamModel) !==
+    normModelMode(nSet?.modelDisplayMode, nSet?.showUpstreamModel)
   ) {
     return false;
   }
   if (pSet?.showUpstreamModel !== nSet?.showUpstreamModel) return false;
-  if (normalizePopoverWidthMode(pSet?.popoverWidthMode) !== normalizePopoverWidthMode(nSet?.popoverWidthMode)) {
+  if (normPopMode(pSet?.popoverWidthMode) !== normPopMode(nSet?.popoverWidthMode)) {
     return false;
   }
-  if (normalizePopoverWidth(pSet?.popoverWidth) !== normalizePopoverWidth(nSet?.popoverWidth)) {
-    return false;
-  }
-  if (
-    String(pSet?.stepTokenComboFormat ?? DEFAULT_STEP_TOKEN_COMBO_FORMAT).trim() !==
-    String(nSet?.stepTokenComboFormat ?? DEFAULT_STEP_TOKEN_COMBO_FORMAT).trim()
-  ) {
+  if (normPopW(pSet?.popoverWidth) !== normPopW(nSet?.popoverWidth)) {
     return false;
   }
   if (
-    normalizeOrchestratorIdMode(pSet?.orchestratorIdMode) !==
-    normalizeOrchestratorIdMode(nSet?.orchestratorIdMode)
+    String(pSet?.stepTokenComboFormat ?? 'context:in:cache').trim() !==
+    String(nSet?.stepTokenComboFormat ?? 'context:in:cache').trim()
   ) {
+    return false;
+  }
+  const prevOrchIdMode =
+    String(pSet?.orchestratorIdMode ?? 'compact').trim().toLowerCase() === 'full'
+      ? 'full'
+      : 'compact';
+  const nextOrchIdMode =
+    String(nSet?.orchestratorIdMode ?? 'compact').trim().toLowerCase() === 'full'
+      ? 'full'
+      : 'compact';
+  if (prevOrchIdMode !== nextOrchIdMode) {
     return false;
   }
   if (pSet?.weeklyLimitMode !== nSet?.weeklyLimitMode) return false;
@@ -235,16 +523,31 @@ export function isEquivalentTelemetry(prev, next) {
   if ((pSet?.pluginUpdateMode ?? '') !== (nSet?.pluginUpdateMode ?? '')) return false;
   if (pSet?.autoUpdatePlugin !== nSet?.autoUpdatePlugin) return false;
   if (
-    normalizeClientWindowMountMode(pSet?.windowMountMode, pSet?.enableWindowOverlay) !==
-    normalizeClientWindowMountMode(nSet?.windowMountMode, nSet?.enableWindowOverlay)
+    normMount(pSet?.windowMountMode, pSet?.enableWindowOverlay) !==
+    normMount(nSet?.windowMountMode, nSet?.enableWindowOverlay)
+  ) {
+    return false;
+  }
+  if (
+    JSON.stringify(pSet?.customModelPricing || {}) !==
+    JSON.stringify(nSet?.customModelPricing || {})
   ) {
     return false;
   }
   if (pSet?.enableWindowOverlay !== nSet?.enableWindowOverlay) return false;
+  if (Boolean(pSet?.moveComposerPermissionLeft) !== Boolean(nSet?.moveComposerPermissionLeft)) {
+    return false;
+  }
   if ((pSet?.enableCliStatusLine !== false) !== (nSet?.enableCliStatusLine !== false)) {
     return false;
   }
   if ((pSet?.showTopbarMultiSession !== false) !== (nSet?.showTopbarMultiSession !== false)) {
+    return false;
+  }
+  if (
+    normalizeClientQuotaDisplayMode(pSet?.quotaDisplayMode) !==
+    normalizeClientQuotaDisplayMode(nSet?.quotaDisplayMode)
+  ) {
     return false;
   }
   if (Boolean(pSet?.showStepTurnRail) !== Boolean(nSet?.showStepTurnRail)) {
@@ -262,19 +565,7 @@ export function isEquivalentTelemetry(prev, next) {
   if (!sameArr(pSet?.overviewMetrics, nSet?.overviewMetrics)) return false;
   if (!sameArr(pSet?.stepTableColumns, nSet?.stepTableColumns)) return false;
 
-  // 2. 比对云端状态与桥接健康度
-  const pWb = prev.windowBridge;
-  const nWb = next.windowBridge;
-  if (
-    (pWb?.state || '') !== (nWb?.state || '') ||
-    Boolean(pWb?.argvUpdatedThisBoot) !== Boolean(nWb?.argvUpdatedThisBoot) ||
-    Boolean(pWb?.argvConfigured) !== Boolean(nWb?.argvConfigured) ||
-    Boolean(pWb?.launcherConfigured) !== Boolean(nWb?.launcherConfigured) ||
-    Boolean(pWb?.canRelaunch) !== Boolean(nWb?.canRelaunch) ||
-    Number(pWb?.aliveCount || 0) !== Number(nWb?.aliveCount || 0)
-  ) {
-    return false;
-  }
+  
   const pCloud = prev.cloudStatus;
   const nCloud = next.cloudStatus;
   if (
@@ -295,7 +586,7 @@ export function isEquivalentTelemetry(prev, next) {
     return false;
   }
 
-  // 3. 比对活跃会话的实时测速指标
+  
   if (pAct?.cascadeId !== nAct?.cascadeId) return false;
   if (pAct?.stepCount !== nAct?.stepCount) return false;
   if (pAct?.subagentCount !== nAct?.subagentCount) return false;
@@ -407,7 +698,7 @@ export function isEquivalentTelemetry(prev, next) {
     ) {
       return false;
     }
-    // 主代理步骤由根会话统一比对，避免明细视图组装后的引用造成重复比对。
+    
     const paSteps = pa?.isMain && pAct?.recentSteps ? [] : pa?.recentSteps || [];
     const naSteps = na?.isMain && nAct?.recentSteps ? [] : na?.recentSteps || [];
     if (paSteps.length !== naSteps.length) return false;
@@ -450,10 +741,11 @@ export function isEquivalentTelemetry(prev, next) {
     }
   }
 
-  // 4. 比对 10 通道上下文窗口构成及近期步骤明细
+  // 4. 10
   const pCtx = pAct?.context;
   const nCtx = nAct?.context;
   if (pCtx?.totalTokens !== nCtx?.totalTokens) return false;
+  if (pCtx?.usedPct !== nCtx?.usedPct) return false;
   if (pCtx?.compactionLimitTokens !== nCtx?.compactionLimitTokens) return false;
   if (pCtx?.limitTokens !== nCtx?.limitTokens) return false;
   if (pCtx?.messagesTokens !== nCtx?.messagesTokens) return false;
@@ -505,7 +797,7 @@ export function isEquivalentTelemetry(prev, next) {
     }
   }
 
-  // 5. 比对消费统计所选时间区间、当前会话累计消费与账号全局累计消费
+  
   const pRange = prev.consumption?.selectedRange;
   const nRange = next.consumption?.selectedRange;
   if (pRange?.key !== nRange?.key) return false;
@@ -531,7 +823,7 @@ export function isEquivalentTelemetry(prev, next) {
   if (pAcct?.cacheHitPct !== nAcct?.cacheHitPct) return false;
   if (pAcct?.unpricedCalls !== nAcct?.unpricedCalls) return false;
 
-  // 6. 比对历史趋势时间分桶序列与年度分月序列
+  
   const pTrend = prev.consumption?.trendSeries || [];
   const nTrend = next.consumption?.trendSeries || [];
   if (pTrend.length !== nTrend.length) return false;
@@ -559,7 +851,7 @@ export function isEquivalentTelemetry(prev, next) {
     }
   }
 
-  // 7. 比对按模型汇总明细与数据来源汇总明细
+  
   const pModels = prev.modelBreakdown || [];
   const nModels = next.modelBreakdown || [];
   if (pModels.length !== nModels.length) return false;
@@ -592,7 +884,7 @@ export function isEquivalentTelemetry(prev, next) {
     }
   }
 
-  // 8. 比对账号订阅档位与动态多配额池
+  
   if (
     prev.account?.email !== next.account?.email ||
     prev.account?.name !== next.account?.name ||
@@ -660,11 +952,33 @@ export function isEquivalentTelemetry(prev, next) {
       pConvs[i]?.status !== nConvs[i]?.status ||
       pConvs[i]?.stepCount !== nConvs[i]?.stepCount ||
       pConvs[i]?.subagentCount !== nConvs[i]?.subagentCount ||
-      pConvs[i]?.totalStepCount !== nConvs[i]?.totalStepCount
+      pConvs[i]?.totalStepCount !== nConvs[i]?.totalStepCount ||
+      pConvs[i]?.latestTokPerSec !== nConvs[i]?.latestTokPerSec ||
+      pConvs[i]?.latestTtftSec !== nConvs[i]?.latestTtftSec ||
+      pConvs[i]?.avgTokPerSec !== nConvs[i]?.avgTokPerSec ||
+      pConvs[i]?.latestStepCostUsd !== nConvs[i]?.latestStepCostUsd ||
+      pConvs[i]?.latestCacheHitPct !== nConvs[i]?.latestCacheHitPct ||
+      pConvs[i]?.totalTokens !== nConvs[i]?.totalTokens ||
+      pConvs[i]?.contextUsedPct !== nConvs[i]?.contextUsedPct ||
+      pConvs[i]?.contextLimitTokens !== nConvs[i]?.contextLimitTokens ||
+      pConvs[i]?.contextTotalTokens !== nConvs[i]?.contextTotalTokens ||
+      pConvs[i]?.contextBreakdown?.assistantTokens !== nConvs[i]?.contextBreakdown?.assistantTokens ||
+      pConvs[i]?.contextBreakdown?.toolResultsTokens !== nConvs[i]?.contextBreakdown?.toolResultsTokens ||
+      pConvs[i]?.contextBreakdown?.userInputTokens !== nConvs[i]?.contextBreakdown?.userInputTokens ||
+      pConvs[i]?.contextBreakdown?.subagentTokens !== nConvs[i]?.contextBreakdown?.subagentTokens ||
+      pConvs[i]?.contextBreakdown?.checkpointTokens !== nConvs[i]?.contextBreakdown?.checkpointTokens ||
+      pConvs[i]?.contextBreakdown?.systemPromptTokens !== nConvs[i]?.contextBreakdown?.systemPromptTokens ||
+      pConvs[i]?.contextBreakdown?.systemToolsTokens !== nConvs[i]?.contextBreakdown?.systemToolsTokens ||
+      pConvs[i]?.contextBreakdown?.mcpToolsTokens !== nConvs[i]?.contextBreakdown?.mcpToolsTokens ||
+      pConvs[i]?.contextBreakdown?.skillsTokens !== nConvs[i]?.contextBreakdown?.skillsTokens ||
+      pConvs[i]?.contextBreakdown?.userRulesTokens !== nConvs[i]?.contextBreakdown?.userRulesTokens ||
+      pConvs[i]?.sessionCostUsd !== nConvs[i]?.sessionCostUsd
     ) {
       return false;
     }
   }
+
+  if ((prev.discoveredModels?.length || 0) !== (next.discoveredModels?.length || 0)) return false;
 
   const pRunning = prev.runningConversations || [];
   const nRunning = next.runningConversations || [];
@@ -777,12 +1091,30 @@ async function requestTelemetry(params, force) {
   }
 
   try {
-    const previousSteps = lastReceivedSteps || readDisplaySteps(telemetryStore.getState().telemetry);
+    const existingTelemetry = telemetryStore.getState().telemetry;
+    const previousSteps = lastReceivedSteps || readDisplaySteps(existingTelemetry);
     params.set('stepRevision', previousSteps?.revision || '');
+    if (!force && existingTelemetry?.telemetryRev) {
+      params.set('telemetryRev', String(existingTelemetry.telemetryRev));
+    }
     const payload = await callSidecarApi(`/api/telemetry?${params}`, {
       method: 'GET',
       abortKey: force ? 'telemetry-force' : 'telemetry-poll',
     });
+
+    if (
+      !force &&
+      payload?.unchanged === true &&
+      existingTelemetry &&
+      String(payload?.telemetryRev || '') === String(existingTelemetry.telemetryRev || '')
+    ) {
+      consecutivePollFailures = 0;
+      const nextMinuteTick = Math.floor(Date.now() / 30000);
+      if (telemetryStore.getState().minuteTick !== nextMinuteTick) {
+        telemetryStore.setState({ minuteTick: nextMinuteTick });
+      }
+      return existingTelemetry;
+    }
 
     const active = payload?.activeConversation;
     if (payload?.stepsUnchanged) {
@@ -816,6 +1148,12 @@ async function requestTelemetry(params, force) {
     consecutivePollFailures = 0;
 
     const latestSt = telemetryStore.getState();
+    const previousAccount = latestSt.telemetry?.account;
+    const nextAccount = payload?.account;
+    const accountChanged = previousAccount?.status === 'signedIn' &&
+      (nextAccount?.status === 'signedOut' || (nextAccount?.status === 'signedIn' &&
+        (previousAccount.email || previousAccount.name) !== (nextAccount.email || nextAccount.name)));
+    const accountPatch = accountChanged ? { selectedConversationId: '' } : {};
     if (force) {
       const elapsed = Date.now() - startMs;
       if (elapsed < 220) {
@@ -826,6 +1164,7 @@ async function requestTelemetry(params, force) {
       }
       if (feedbackTimer) clearTimeout(feedbackTimer);
       telemetryStore.setState({
+        ...accountPatch,
         telemetry: payload,
         minuteTick: Math.floor(Date.now() / 30000),
         syncState: 'synced',
@@ -838,6 +1177,7 @@ async function requestTelemetry(params, force) {
       const isSame = isEquivalentTelemetry(latestSt.telemetry, payload);
       const nextTelemetry = isSame ? latestSt.telemetry : payload;
       telemetryStore.setState({
+        ...accountPatch,
         telemetry: nextTelemetry,
         minuteTick: Math.floor(Date.now() / 30000),
         syncState: latestSt.syncState === 'synced' ? 'synced' : 'idle',
@@ -855,7 +1195,8 @@ async function requestTelemetry(params, force) {
     if (force) {
       activeForceCount = Math.max(0, activeForceCount - 1);
       if (activeForceCount === 0 && loopActive && loopTickFn && !pollTimer) {
-        pollTimer = setTimeout(loopTickFn, loopIntervalMs);
+        const nextDelay = loopResolveDelayFn ? loopResolveDelayFn() : loopIntervalMs;
+        pollTimer = setTimeout(loopTickFn, nextDelay);
       }
     }
   }
@@ -873,10 +1214,15 @@ export async function saveSettingsPatch(patch) {
     safePatch.fontScale = normalizeClientFontScale(safePatch.fontScale);
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'weeklyLimitMode')) {
-    safePatch.weeklyLimitMode = normalizeWeeklyLimitMode(safePatch.weeklyLimitMode);
+    const mode = safePatch.weeklyLimitMode;
+    safePatch.weeklyLimitMode =
+      mode === 'custom_tokens' || mode === 'custom_cost' ? mode : 'official';
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'enableCliStatusLine')) {
     safePatch.enableCliStatusLine = Boolean(safePatch.enableCliStatusLine);
+  }
+  if (Object.prototype.hasOwnProperty.call(safePatch, 'moveComposerPermissionLeft')) {
+    safePatch.moveComposerPermissionLeft = Boolean(safePatch.moveComposerPermissionLeft);
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'showTopbarMultiSession')) {
     safePatch.showTopbarMultiSession = Boolean(safePatch.showTopbarMultiSession);
@@ -947,7 +1293,7 @@ export async function saveSettingsPatch(patch) {
     safePatch.enableWindowOverlay = normMount !== 'sidebar';
   } else if (Object.prototype.hasOwnProperty.call(safePatch, 'enableWindowOverlay')) {
     safePatch.enableWindowOverlay = Boolean(safePatch.enableWindowOverlay);
-    safePatch.windowMountMode = safePatch.enableWindowOverlay ? 'dual' : 'sidebar';
+    safePatch.windowMountMode = safePatch.enableWindowOverlay ? 'composer' : 'sidebar';
   }
   const prevTelemetry = telemetryStore.getState().telemetry;
   if (prevTelemetry?.settings) {
@@ -1013,18 +1359,6 @@ export async function triggerCloudSync() {
   return res;
 }
 
-export async function triggerBridgeHostRelaunch() {
-  try {
-    return await callSidecarApi('/api/bridge/relaunch', { method: 'POST', body: {} });
-  } catch {
-    // 兼容热更新后常驻父进程 main.mjs 尚未重注册新路由的场景，平滑回退至既有 POST /api/settings 通道转发至最新 Worker
-    return callSidecarApi('/api/settings', {
-      method: 'POST',
-      body: { __bridgeAction: 'relaunch' },
-    });
-  }
-}
-
 export async function triggerPluginUpdate() {
   const res = await callSidecarApi('/api/plugin-update', { method: 'POST', body: {} });
   if (res?.ok && res?.restarting) {
@@ -1048,11 +1382,15 @@ export function startAsyncTelemetryLoop(intervalMs = 2000) {
   loopIntervalMs = intervalMs;
 
   const resolveNextDelay = () => {
-    if (isWindowOverlayMode() && typeof document !== 'undefined' && document.hidden) {
-      return Math.max(loopIntervalMs, 8000);
-    }
-    return loopIntervalMs;
+    const isHidden =
+      isWindowOverlayMode() && typeof document !== 'undefined' && document.hidden === true;
+    return resolveAdaptivePollDelayMs(
+      telemetryStore.getState().telemetry,
+      loopIntervalMs,
+      isHidden
+    );
   };
+  loopResolveDelayFn = resolveNextDelay;
 
   const tick = async () => {
     pollTimer = null;
@@ -1074,6 +1412,7 @@ export function startAsyncTelemetryLoop(intervalMs = 2000) {
 export function stopAsyncTelemetryLoop() {
   loopActive = false;
   loopTickFn = null;
+  loopResolveDelayFn = null;
   if (pollTimer) {
     clearTimeout(pollTimer);
     pollTimer = null;
@@ -1084,90 +1423,88 @@ export function stopAsyncTelemetryLoop() {
   }
 }
 
-export {
-  formatAgentBadgeText,
-  formatAgentLabel,
-  formatLiveActivityDetail,
-  formatLiveActivityLabel,
-  getAgentBadgeClass,
-};
+/**
+ * 
+ *
+ * @param {number} [index=0]
+ * @param {boolean} [isMain=false]
+ * @returns {string}
+ */
+export function getAgentBadgeClass(index = 0, isMain = false) {
+  if (isMain || index <= 0) return 'badge-main';
+  const slot = ((index - 1) % 3) + 1;
+  return `badge-sub-${slot}`;
+}
 
 /**
- * 解析当前选中的主/子代理作用域视图数据与独立上下文窗口检视目标。
- * 同时在客户端按需组装主代理与全部汇总的 `recentSteps`，避免后端 JSON 载荷重复序列化 2-3 倍步骤列表。
+ * / ` ` / ` 1` `Main` / `S1` 
+ *
+ * @param {object|null|undefined} agent
+ * @returns {string}
+ */
+export function formatAgentBadgeText(agent) {
+  if (!agent || agent.isMain) return t('fmt.mainBadge');
+  return agent.index ? t('fmt.subBadge', { index: agent.index }) : t('fmt.subBadgeShort');
+}
+
+export function formatAgentLabel(agent) {
+  if (!agent || agent.isMain) return t('fmt.mainAgent');
+  const idx = Number(agent.index || 0);
+  const baseLabel = idx > 0 ? `${t('fmt.subAgent')} #${idx}` : t('fmt.subAgent');
+  const rolePart =
+    agent.role && agent.role !== 'Subagent' && agent.role !== 'Subagent' ? ` · ${agent.role}` : '';
+  return `${baseLabel}${rolePart}`;
+}
+
+/**
+ * / 
+ * `recentSteps` JSON 2-3 
  *
  * @param {object|null} telemetry
  * @param {string} [selectedAgentScope='all']
  * @param {string} [ctxInspectorAgentId='auto']
- * @param {boolean} [includeSteps=false] 是否组装调用明细所需的步骤列表
+ * @param {boolean} [includeSteps=false] 
  */
-const scopedStepProjectionMemo = new WeakMap();
-
 export function resolveScopedConversation(
   telemetry,
   selectedAgentScope = 'all',
   ctxInspectorAgentId = 'auto',
   includeSteps = false
 ) {
-  const rawActive = telemetry?.activeConversation;
-  const active = rawActive || {};
+  const active = telemetry?.activeConversation || {};
   const agents = Array.isArray(active.agents) && active.agents.length > 0 ? active.agents : [];
   const hasSubagents = Boolean(active.hasSubagents && agents.length > 1);
   const subagents = agents.filter((a) => !a.isMain);
-  let mainAgent = agents.find((a) => a.isMain) || active;
-  let aggregated = active.aggregated || active;
-  let resolvedAgents = agents;
-
-  if (includeSteps) {
-    let cached = rawActive && typeof rawActive === 'object' ? scopedStepProjectionMemo.get(rawActive) : null;
-    if (!cached) {
-      let nextMain = mainAgent;
-      let nextAgents = agents;
-      if (!Array.isArray(mainAgent.recentSteps) && Array.isArray(active.recentSteps)) {
-        nextMain = { ...mainAgent, recentSteps: active.recentSteps };
-        if (agents.includes(mainAgent)) {
-          nextAgents = agents.map((ag) => (ag === mainAgent ? nextMain : ag));
-        }
-      }
-      let nextAgg = aggregated;
-      if (hasSubagents && !Array.isArray(aggregated.recentSteps)) {
-        const combined = [];
-        for (const ag of nextAgents) {
-          const steps = ag.isMain ? ag.recentSteps || active.recentSteps || [] : ag.recentSteps || [];
-          for (const step of steps) combined.push(step);
-        }
-        combined.sort(
-          (a, b) =>
-            (b.createdAtMs || 0) - (a.createdAtMs || 0) ||
-            (b.agentIndex || 0) - (a.agentIndex || 0) ||
-            (b.stepIndex || 0) - (a.stepIndex || 0)
-        );
-        nextAgg = { ...aggregated, recentSteps: combined };
-      }
-      cached = { mainAgent: nextMain, aggregated: nextAgg, agents: nextAgents };
-      if (rawActive && typeof rawActive === 'object') {
-        scopedStepProjectionMemo.set(rawActive, cached);
-      }
+  const mainAgent = agents.find((a) => a.isMain) || active;
+  if (includeSteps && !Array.isArray(mainAgent.recentSteps) && Array.isArray(active.recentSteps)) {
+    mainAgent.recentSteps = active.recentSteps;
+  }
+  const aggregated = active.aggregated || active;
+  if (includeSteps && hasSubagents && !Array.isArray(aggregated.recentSteps)) {
+    const combined = [];
+    for (const ag of agents) {
+      const steps = ag.isMain ? ag.recentSteps || active.recentSteps || [] : ag.recentSteps || [];
+      for (const step of steps) combined.push(step);
     }
-    mainAgent = cached.mainAgent;
-    aggregated = cached.aggregated;
-    resolvedAgents = cached.agents;
+    combined.sort(
+      (a, b) =>
+        (b.createdAtMs || 0) - (a.createdAtMs || 0) ||
+        (b.agentIndex || 0) - (a.agentIndex || 0) ||
+        (b.stepIndex || 0) - (a.stepIndex || 0)
+    );
+    aggregated.recentSteps = combined;
   }
 
   if (!hasSubagents) {
-    const singleScoped =
-      includeSteps && !Array.isArray(active.recentSteps) && Array.isArray(mainAgent.recentSteps)
-        ? { ...active, recentSteps: mainAgent.recentSteps }
-        : active;
     return {
       hasSubagents: false,
       effectiveScope: 'main',
       effectiveCtxScope: 'main',
-      agents: resolvedAgents,
+      agents,
       subagents: [],
       mainAgent,
       aggregated,
-      scopedConv: singleScoped,
+      scopedConv: active,
       ctxAgent: mainAgent,
     };
   }
@@ -1183,13 +1520,13 @@ export function resolveScopedConversation(
   const scopedConv =
     effectiveScope === 'all'
       ? aggregated
-      : resolvedAgents.find((a) => a.agentId === effectiveScope) || mainAgent;
+      : agents.find((a) => a.agentId === effectiveScope) || mainAgent;
 
   let ctxAgent = scopedConv;
   let effectiveCtxScope = effectiveScope;
   if (effectiveScope === 'all') {
     if (ctxInspectorAgentId && ctxInspectorAgentId !== 'auto') {
-      const matched = resolvedAgents.find((a) => a.agentId === ctxInspectorAgentId);
+      const matched = agents.find((a) => a.agentId === ctxInspectorAgentId);
       if (matched) {
         ctxAgent = matched;
         effectiveCtxScope = matched.agentId;
@@ -1201,8 +1538,8 @@ export function resolveScopedConversation(
     }
     if (effectiveCtxScope === 'auto') {
       ctxAgent =
-        resolvedAgents.find((a) => !a.isSideQuestion && a.agentId === aggregated.activeAgentId) ||
-        resolvedAgents.find((a) => !a.isSideQuestion && a.isRunning) ||
+        agents.find((a) => a.agentId === aggregated.activeAgentId) ||
+        agents.find((a) => a.isRunning) ||
         mainAgent;
     }
   }
@@ -1211,29 +1548,11 @@ export function resolveScopedConversation(
     hasSubagents: true,
     effectiveScope,
     effectiveCtxScope,
-    agents: resolvedAgents,
+    agents,
     subagents,
     mainAgent,
     aggregated,
     scopedConv,
     ctxAgent,
   };
-}
-
-/**
- * 判断宿主系统是否为 macOS (`darwin`)：优先读取后端遥测或双栖桥接注入的 `platform`，首帧缺省时回退 UA/平台标识。
- *
- * @param {Record<string, any>|null|undefined} telemetry
- * @returns {boolean}
- */
-export function isMacHostPlatform(telemetry) {
-  const p = String(telemetry?.hostPlatform || readInjectedWindowBridge()?.platform || '')
-    .trim()
-    .toLowerCase();
-  if (p) return p === 'darwin';
-  if (typeof navigator !== 'undefined') {
-    const ua = String(navigator.platform || navigator.userAgent || '');
-    return /\b(?:mac|darwin)\b|macintosh|mac\s*os/i.test(ua);
-  }
-  return false;
 }

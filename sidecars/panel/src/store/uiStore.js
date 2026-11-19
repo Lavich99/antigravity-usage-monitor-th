@@ -5,6 +5,13 @@
 import { createReactiveStore } from '../core/reactive.js';
 import { t } from '../i18n/index.js';
 
+export const VIEW_TABS = Object.freeze([
+  { value: 'overview', label: 'Live', icon: 'pulse' },
+  { value: 'consumption', label: 'Usage', icon: 'chart-bar' },
+  { value: 'steps', label: 'Steps', icon: 'table' },
+  { value: 'settings', label: 'Settings', icon: 'sliders' },
+]);
+
 export function getViewTabs() {
   return [
     { value: 'overview', label: t('nav.overview'), icon: 'pulse' },

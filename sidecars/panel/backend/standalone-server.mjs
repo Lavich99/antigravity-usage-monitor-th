@@ -1,11 +1,11 @@
 /**
- * @fileoverview 无 `sidecar_sdk` 依赖的独立 Web 监控 HTTP 服务端 (`standalone-server.mjs`)。
+ * @fileoverview `sidecar_sdk` Web HTTP (`standalone-server.mjs`) 
  *
- * 面向无头 Linux CLI (`agy` / `agy remote-control serve`)、SSH 端口转发 (`ssh -L`) 与受保护远程访问场景：
- * 1. 默认严格绑定 `127.0.0.1`（本机浏览器或 `ssh -L` 零配置直连，校检回环地址与同端口 Host/Origin）；
- * 2. 若显式绑定非回环地址（如 `0.0.0.0`、`::` 或局域网 IP），强制要求配置 `--token <secret>` 或
- *    `USAGE_MONITOR_STANDALONE_TOKEN`，拒绝无鉴权公网/局域网裸奔启动；
- * 3. 完整托管四分页 Web 面板（`/`、`/app.js`、`/styles.css`、`/preload.js` 兼容桩）与 `/api/*` 路由。
+ * Linux CLI (`agy` / `agy remote-control serve`) SSH (`ssh -L`) 
+ * 1. `127.0.0.1` `ssh -L` Host/Origin 
+ * 2. `0.0.0.0` `::` IP `--token <secret>` 
+ * `USAGE_MONITOR_STANDALONE_TOKEN` / 
+ * 3. Web `/` `/app.js` `/styles.css` `/preload.js` `/api/*` 
  */
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
@@ -18,7 +18,6 @@ import {
 import { loadSettings, lsRuntimeEndpoint, setLsRuntimeEndpoint } from './config.mjs';
 import { ensureLsEndpointDiscovered } from './ls-discovery.mjs';
 import { ensureCliStatusLineConfigured } from './cli-statusline-config.mjs';
-import { syncCloudCatalog } from './plugin-updater.mjs';
 
 const MAX_JSON_BODY_BYTES = 1024 * 1024;
 const AUTH_COOKIE_NAME = 'ag_um_token';
@@ -28,7 +27,7 @@ const NO_STORE_HEADERS = {
 };
 
 /**
- * 判断绑定监听地址是否属于纯本机回环地址。
+ * 
  *
  * @param {string} host
  * @returns {boolean}
@@ -99,14 +98,14 @@ function extractBearerToken(authHeader) {
 
 function renderTokenLoginHtml(hasError = false) {
   const errHtml = hasError
-    ? '<p class="err">访问令牌无效，请核对后重新输入。</p>'
+    ? '<p class="err">โทเค็นไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่อีกครั้ง</p>'
     : '';
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="th-TH">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>用量监控 · 访问验证</title>
+  <title>Usage Monitor · ยืนยันการเข้าถึง</title>
   <style>
     :root { color-scheme: dark light; }
     * { box-sizing: border-box; }
@@ -160,18 +159,18 @@ function renderTokenLoginHtml(hasError = false) {
 </head>
 <body>
   <form class="card" method="POST" action="/api/standalone-auth">
-    <h1>Antigravity Usage Monitor</h1>
-    <p>当前独立监控服务已启用访问令牌保护，请输入 Token 继续。</p>
+    <h1>Usage Monitor</h1>
+    <p>โหมดเว็บสแตนด์อโลนเปิดใช้งานการป้องกันด้วยโทเค็น กรุณากรอก Token เพื่อดำเนินการต่อ</p>
     ${errHtml}
-    <input type="password" name="token" placeholder="输入 --token 访问密钥" autocomplete="current-password" required autofocus>
-    <button type="submit">验证并进入面板</button>
+    <input type="password" name="token" placeholder="กรอกรหัส --token" autocomplete="current-password" required autofocus>
+    <button type="submit">ยืนยันและเปิดแผงควบคุม</button>
   </form>
 </body>
 </html>`;
 }
 
 /**
- * 解析独立 Web 模式的命令行参数与环境变量。
+ * Web 
  *
  * @param {string[]} [argv=[]]
  * @param {Record<string, string|undefined>} [env=process.env]
@@ -330,18 +329,18 @@ function isSameOriginPostRequest(req) {
 }
 
 /**
- * 创建独立 Web 监控服务器控制器。
+ * Web 
  *
  * @param {{
- *   host?: string,
- *   port?: number,
- *   token?: string,
- *   lsAddr?: string,
- *   csrfToken?: string,
- *   handleApiRequest?: typeof dispatchBridgeApiRequest,
- *   readAssetFn?: typeof readLocalAsync,
- *   onRestart?: (() => void) | null,
- *   skipStartupDiscovery?: boolean
+ * host?: string,
+ * port?: number,
+ * token?: string,
+ * lsAddr?: string,
+ * csrfToken?: string,
+ * handleApiRequest?: typeof dispatchBridgeApiRequest,
+ * readAssetFn?: typeof readLocalAsync,
+ * onRestart?: (() => void) | null,
+ * skipStartupDiscovery?: boolean
  * }} [options]
  */
 export function createStandaloneWebServer(options = {}) {
@@ -356,8 +355,8 @@ export function createStandaloneWebServer(options = {}) {
     );
   }
 
-  if (options.lsAddr) {
-    setLsRuntimeEndpoint(options.lsAddr, options.csrfToken || '', { isDynamic: false });
+  if (options.lsAddr && options.csrfToken) {
+    setLsRuntimeEndpoint(options.lsAddr, options.csrfToken, { isDynamic: false });
   }
 
   const expectedCookieVal = token ? deriveCookieValue(token) : '';
@@ -576,14 +575,8 @@ export function createStandaloneWebServer(options = {}) {
     }
     if (!options.skipStartupDiscovery && lsRuntimeEndpoint.addr !== 'test.invalid') {
       ensureCliStatusLineConfigured({ enabled: loadSettings().enableCliStatusLine !== false });
-      if (lsRuntimeEndpoint.baseUrl) {
-        syncCloudCatalog({ force: false }).catch(() => {});
-      } else {
-        ensureLsEndpointDiscovered({ force: false })
-          .then((ok) => {
-            if (ok) syncCloudCatalog({ force: false }).catch(() => {});
-          })
-          .catch(() => {});
+      if (!lsRuntimeEndpoint.baseUrl) {
+        ensureLsEndpointDiscovered({ force: false }).catch(() => {});
       }
     }
 

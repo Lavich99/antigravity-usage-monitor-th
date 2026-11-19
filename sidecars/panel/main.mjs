@@ -1,18 +1,22 @@
 /**
- * @fileoverview Antigravity Usage Monitor 面板 Sidecar HTTP 服务入口。
+ * @fileoverview Antigravity Usage Monitor Sidecar HTTP 
  *
- * 职责边界：
- * - 提供前端静态资产路由（`/`、`/app.js`、`/styles.css`，每次请求从磁盘读取最新产物）；
- * - 提供严格同端口 Loopback 受保护的 JSON API 路由；
- * - 在真实宿主环境中通过 `node:worker_threads` 托管 `./backend/sidecar-worker.mjs`：
- *   当插件在客户端未关闭时执行自更新或外部覆盖文件，主进程保持常驻不退出（守护 `SidecarApp` 宿主端口不断连），
- *   仅在后台毫秒级平滑替换为全新 V8 Isolate 的 Worker 实例并复用桥接端口，彻底消除热更新后的「重试中」失联问题。
+ * 
+ * - `/` `/app.js` `/styles.css` 
+ * - Loopback JSON API 
+ * - `node:worker_threads` `./backend/sidecar-worker.mjs` 
+ * `SidecarApp` 
+ * V8 Isolate Worker 
  */
 
 import { Worker } from 'node:worker_threads';
 import { Response, SidecarApp } from 'sidecar_sdk';
-import { BRIDGE_API_ROUTE_DEFS } from './shared/window-bridge-protocol.mjs';
-import { isLocalHostRequest, readLocalAsync } from './backend/http-helpers.mjs';
+import {
+  bootWindowBridgeRuntime,
+  dispatchBridgeApiRequest,
+  isLocalHostRequest,
+  readLocalAsync,
+} from './backend/api-actions.mjs';
 
 const app = new SidecarApp();
 
@@ -23,7 +27,7 @@ const isTestHarnessEnv =
   typeof Worker !== 'function';
 
 // ---------------------------------------------------------------------------
-// 热可替换后端 Worker 监督器（仅在真实宿主运行时启用，测试沙箱直接走内存分发）
+// Worker
 // ---------------------------------------------------------------------------
 
 let activeWorker = null;
@@ -77,7 +81,7 @@ function createBackendWorkerInstance() {
   });
 
   worker.on('error', () => {
-    // 交由 exit 回调统一回收并拉起新实例
+    // exit
   });
 
   return worker;
@@ -107,12 +111,12 @@ async function stopWorkerGracefully(worker) {
   try {
     await sendWorkerMessage(worker, { type: 'shutdown' }, 1200);
   } catch {
-    // 超时或通道已关闭时直接强制终止旧 Isolate
+    // Isolate
   }
   try {
     await worker.terminate();
   } catch {
-    // 忽略重复终止异常
+    
   }
 }
 
@@ -140,20 +144,9 @@ async function ensureActiveWorker() {
   return activeWorker;
 }
 
-let testHarnessApiModulePromise = null;
-
-function getTestHarnessApiModule() {
-  testHarnessApiModulePromise ||= import('./backend/api-actions.mjs');
-  return testHarnessApiModulePromise;
-}
-
 async function forwardApiCall(pathname, method, data) {
   if (isTestHarnessEnv) {
-    if (typeof dispatchBridgeApiRequest === 'function') {
-      return dispatchBridgeApiRequest(pathname, method, data);
-    }
-    const mod = await getTestHarnessApiModule();
-    return mod.dispatchBridgeApiRequest(pathname, method, data);
+    return dispatchBridgeApiRequest(pathname, method, data);
   }
   const upperMethod = String(method || 'GET').toUpperCase();
   try {
@@ -184,7 +177,7 @@ async function handleProtectedApi(pathname, method, data, req) {
 }
 
 // ---------------------------------------------------------------------------
-// 静态页面与前端资产路由
+
 // ---------------------------------------------------------------------------
 
 app.page(
@@ -215,32 +208,20 @@ app.page(
 );
 
 // ---------------------------------------------------------------------------
-// 业务数据与控制 API 路由（统一源自 shared/window-bridge-protocol.mjs）
+// API
 // ---------------------------------------------------------------------------
 
-for (const route of BRIDGE_API_ROUTE_DEFS) {
-  app.api(
-    route.path,
-    (data, req) =>
-      handleProtectedApi(
-        route.path,
-        route.method,
-        route.method === 'GET' && route.action !== 'telemetry' ? undefined : data,
-        req
-      ),
-    route.method
-  );
-}
+app.api('/api/telemetry', (data, req) => handleProtectedApi('/api/telemetry', 'GET', data, req), 'GET');
+app.api('/api/settings', (data, req) => handleProtectedApi('/api/settings', 'POST', data, req));
+app.api('/api/context-window', (data, req) => handleProtectedApi('/api/context-window', 'POST', data, req));
+app.api('/api/settings/reset', (_data, req) => handleProtectedApi('/api/settings/reset', 'POST', undefined, req));
+app.api('/api/cache/rebuild', (_data, req) => handleProtectedApi('/api/cache/rebuild', 'POST', undefined, req));
+app.api('/api/cloud-sync', (_data, req) => handleProtectedApi('/api/cloud-sync', 'POST', undefined, req));
+app.api('/api/plugin-update', (_data, req) => handleProtectedApi('/api/plugin-update', 'POST', undefined, req));
 
 app.run();
 if (isTestHarnessEnv) {
-  if (typeof bootWindowBridgeRuntime === 'function') {
-    bootWindowBridgeRuntime({ allowDynamicLs: false });
-  } else {
-    void getTestHarnessApiModule().then((mod) =>
-      mod.bootWindowBridgeRuntime({ allowDynamicLs: false })
-    );
-  }
+  bootWindowBridgeRuntime({ allowDynamicLs: false });
 } else {
   void ensureActiveWorker();
 }

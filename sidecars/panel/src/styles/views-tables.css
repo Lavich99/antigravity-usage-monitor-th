@@ -1,12 +1,12 @@
 /*
- * 步骤明细与模型汇总数据表样式表 (views-tables.css).
- * 包含：
- * 1. 表格专属自定义滚动容器修饰 (.table-scroll-host)
- * 2. 表格滚动视口 (.table-viewport)
- * 3. 粘性表头与紧凑高密度数据表 (.data-table)
+ * (views-tables.css).
+ * 
+ * 1. (.table-scroll-host)
+ * 2. (.table-viewport)
+ * 3. (.data-table)
  */
 
-/* --- 1. 表格专属滚动容器与视口 (Table Scroll Host & Viewport) --- */
+/* --- 1. (Table Scroll Host & Viewport) --- */
 .table-scroll-host {
   flex: 1;
   min-height: 0;
@@ -31,18 +31,17 @@
   overflow-x: auto;
 }
 
-/* --- 2. 粘性表头数据表 (Sticky-Header Data Table) --- */
+/* --- 2. (Sticky-Header Data Table) --- */
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--fs-base-sm);
+  font-size: var(--fs-md);
 }
 
 .data-table th,
 .data-table td {
-  padding: calc(5px * var(--ui-font-scale, 1)) calc(4px * var(--ui-font-scale, 1));
+  padding: 5px 4px;
   text-align: left;
-  font-size: var(--fs-base-sm);
   border-bottom: 1px solid var(--border-hairline);
   white-space: nowrap;
 }
@@ -79,7 +78,7 @@
 .step-model-cell {
   display: inline-flex;
   align-items: baseline;
-  max-width: calc(var(--step-model-max-w, 176px) * var(--ui-font-scale, 1));
+  max-width: var(--step-model-max-w, 176px);
   min-width: 0;
   vertical-align: bottom;
 }
@@ -95,7 +94,7 @@
 .step-model-compact {
   flex-shrink: 0;
   white-space: nowrap;
-  color: var(--accent-primary);
+  color: var(--metric-info, var(--accent-primary));
   font-weight: 500;
 }
 
@@ -134,9 +133,8 @@
 
 .steps-inline-scope-select .select-trigger,
 .steps-inline-model-select .select-trigger {
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  height: auto;
-  padding: 2px 6px;
+  height: 22px;
+  padding: 0 6px;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
@@ -145,7 +143,7 @@
   background: var(--surface-subtle);
 }
 
-/* --- 2.5 极简对话轮次导轨与起点圆点 (Minimalist Turn Rail & Prompt Preview) --- */
+/* --- 2.5 (Minimalist Turn Rail & Prompt Preview) --- */
 .steps-data-table.has-turn-rail th:first-child,
 .steps-data-table.has-turn-rail td:first-child {
   padding-left: 17px;
@@ -237,7 +235,7 @@
   display: none !important;
 }
 
-/* 极简紧凑提问文本悬停预览气泡 */
+/* */
 .turn-prompt-tip {
   position: absolute;
   z-index: 45;
@@ -260,7 +258,7 @@
   animation: anim-popover-in var(--dur-instant) var(--ease-fast);
 }
 
-/* --- 3. 按模型汇总分析视图：双趋势图与极简模型总览 (Models Analytics Pane) --- */
+/* --- 3. (Models Analytics Pane) --- */
 .models-analytics-pane {
   display: flex;
   flex-direction: column;
@@ -322,9 +320,8 @@
 }
 
 .sstep-fit-model-select .select-trigger {
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  height: auto;
-  padding: 2px 6px;
+  height: 22px;
+  padding: 0 6px;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
@@ -380,7 +377,7 @@
 .sstep-axis-label {
   fill: var(--text-muted);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: var(--fs-2xs);
+  font-size: 9.5px;
   user-select: none;
   pointer-events: none;
 }
@@ -488,7 +485,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--fs-md);
+  font-size: 11px;
   pointer-events: none;
   z-index: 2;
 }
@@ -499,7 +496,7 @@
   flex-wrap: wrap;
   gap: 4px 10px;
   padding-top: 2px;
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-secondary);
 }
 
@@ -538,7 +535,7 @@
   flex-wrap: wrap;
   gap: 4px 8px;
   padding-top: 2px;
-  font-size: var(--fs-xs);
+  font-size: 10px;
   color: var(--text-muted);
 }
 
@@ -598,10 +595,10 @@
 }
 
 .sstep-fit-delta {
-  font-size: var(--fs-xs);
+  font-size: 10px;
 }
 
-/* --- 4. 极简高密度模型总览列表 (Minimalist Session Model Summary Cards) --- */
+/* --- 4. (Minimalist Session Model Summary Cards) --- */
 .smodel-section {
   display: flex;
   flex-direction: column;

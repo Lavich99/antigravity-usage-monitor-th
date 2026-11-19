@@ -18,7 +18,7 @@ import { createSvgIcon } from '../../icons/SvgIcon.js';
 import { getEffectiveLocale, t } from '../../i18n/index.js';
 
 /**
- * 归一化动态配额池列表；在官方配额尚未返回时回退预占 Gemini 与 Claude & GPT 两个标准池槽位。
+ * Gemini Claude & GPT 
  *
  * @param {object|null|undefined} quotas
  * @param {number} minuteTick
@@ -65,7 +65,7 @@ export function buildQuotaPoolItems(quotas, minuteTick = 0, { isPending = false 
 }
 
 /**
- * 创建单个配额池的 DOM 行结构，内含 5h 限额与每周限额两个可独立显隐的子窗口进度条。
+ * DOM 5h 
  */
 export function createPoolQuotaRow() {
   const title5h = h('span', { className: 'quota-win-title', text: '5h' });
@@ -113,7 +113,7 @@ export function createPoolQuotaRow() {
 }
 
 /**
- * 格式化可用额度面板底部的汇总行文案（官方配额模式下展示各池周期合计，自定义预算模式下展示自然周累计）。
+ * 
  */
 export function formatQuotaSummaryFooter(quotas, account) {
   const weekly = quotas?.weekly || {};
@@ -134,7 +134,7 @@ export function formatQuotaSummaryFooter(quotas, account) {
 }
 
 /**
- * 同步单个配额池行的 5h 与每周窗口状态。
+ * 5h 
  */
 export function syncPoolQuotaRow(refs, item, idx, rowEl) {
   const { poolData, poolLabel, fallbackWeekly, isActivePool, isPending } = item;

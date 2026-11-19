@@ -1,5 +1,5 @@
 /**
- * @fileoverview View 1: Decoupled `LiveOverviewView.js` (实时监控视图).
+ * @fileoverview View 1: Decoupled `LiveOverviewView.js` ( ).
  * Acts as a lightweight host container delegating all telemetry cards
  * (`metrics`, `context`, `quotas`, `live_tasks`) to `widgetRegistry.js` (`a` calls `b`),
  * allowing users to freely reorder or remove any module down to 1 item.
@@ -31,6 +31,7 @@ export const LiveOverviewView = defineComponent({
   setup({ onCleanup }) {
     const overviewInner = h('div', {
       className: 'overview-modules-host',
+      style: 'display: flex; flex-direction: column; gap: var(--space-3); padding-bottom: 2px;',
     });
 
     const widgetHost = createDynamicWidgetHost({

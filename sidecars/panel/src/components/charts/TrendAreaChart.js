@@ -1,17 +1,78 @@
 /**
- * @fileoverview 交互式历史用量趋势图组件 (TrendAreaChart).
- * 支持双模式自适应切换：
- * 1. <= 90 天（或整点小时分桶）：渲染三次贝塞尔平滑曲线面积图、峰值气泡与对齐多刻度时间轴；
- * 2. > 90 天（自然日分桶）：自动切换为类 GitHub 贡献日历的小格子热力排列（一格一天，7 行星期 × 周列、月份刻度、分位数 5 档热力色阶与底部图例）；
- * 3. 两种模式共享自适应防溢出的悬浮详情卡片（精确日期/小时区间、Token 拆分、费用与调用次数）。
+ * @fileoverview (TrendAreaChart).
+ * 
+ * 1. <= 90 
+ * 2. > 90 GitHub 7 × 5 
+ * 3. / Token 
  */
 
 import { h, patchAttr, patchClasses, patchStyleVar, patchText } from '../../core/domPatch.js';
 import { formatTokensPrecise, formatUsd } from '../../core/formatters.js';
+import { getEffectiveLocale, isEnglishLocale, isThaiLocale } from '../../i18n/index.js';
 import { SVG_NS } from '../../icons/SvgIcon.js';
-import { getEffectiveLocale, t } from '../../i18n/index.js';
 
-/** 超过该自然日天数（> 90 天）时，趋势图切换为类 GitHub 每日小格子热力图 */
+const TREND_MONTH_TH = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+const TREND_MONTH_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function getTrendCopy() {
+  if (isThaiLocale()) {
+    return {
+      weekdays: ['จ', '', 'พ', '', 'ศ', '', 'อา'],
+      gridAria: 'Heatmap การใช้งานรายวัน',
+      less: 'น้อย',
+      more: 'มาก',
+      callsSuffix: ' ครั้ง',
+      inLbl: 'In',
+      cacheLbl: 'Cache',
+      outLbl: 'Out',
+      activeLbl: 'ใช้งาน',
+      daysUnit: 'วัน',
+      peakLbl: 'สูงสุด',
+      formatMonth: (m, year, showYear) => {
+        const name = TREND_MONTH_TH[m - 1] || String(m);
+        return showYear ? `${name} ${String(year).slice(-2)}` : name;
+      },
+    };
+  }
+  if (isEnglishLocale()) {
+    return {
+      weekdays: ['Mon', '', 'Wed', '', 'Fri', '', 'Sun'],
+      gridAria: 'Daily usage heatmap',
+      less: 'Less',
+      more: 'More',
+      callsSuffix: ' calls',
+      inLbl: 'In',
+      cacheLbl: 'Cache',
+      outLbl: 'Out',
+      activeLbl: 'Active',
+      daysUnit: 'd',
+      peakLbl: 'Peak',
+      formatMonth: (m, year, showYear) => {
+        const name = TREND_MONTH_EN[m - 1] || String(m);
+        return showYear ? `${name} '${String(year).slice(-2)}` : name;
+      },
+    };
+  }
+  return {
+    weekdays: ['Mo', '', 'We', '', 'Fr', '', 'Su'],
+    gridAria: 'Daily usage activity heatmap',
+    less: 'Less',
+    more: 'More',
+    callsSuffix: ' calls',
+    inLbl: 'In',
+    cacheLbl: 'Cache',
+    outLbl: 'Out',
+    activeLbl: 'Active',
+    daysUnit: 'days',
+    peakLbl: 'Peak',
+    formatMonth: (m, year, showYear) => {
+      const name = TREND_MONTH_EN[m - 1] || String(m);
+      return showYear ? `${name} '${String(year).slice(-2)}` : name;
+    },
+  };
+}
+
+/** > 90 GitHub */
 export const HEATMAP_DAYS_THRESHOLD = 90;
 
 let chartUidCounter = 0;
@@ -22,12 +83,12 @@ function safeSlotTokens(v) {
 }
 
 /**
- * 将二维采样点序列转换为水平张力平滑的三次贝塞尔曲线 SVG 路径 (`M ... C ...`)。
- * 控制点沿 X 轴取相邻点间距的 `0.42` 张力系数，Y 轴与各自端点齐平，
- * 保证曲线在极值点处平缓过渡且不会产生上下过冲 (Overshoot)。
+ * SVG (`M ... C ...`) 
+ * X `0.42` Y 
+ * (Overshoot) 
  *
- * @param {Array<{ x: number, y: number }>} points SVG 坐标系下的采样点数组（长度 >= 2）
- * @returns {string} SVG `<path>` 的 `d` 属性字符串
+ * @param {Array<{ x: number, y: number }>} points SVG >= 2 
+ * @returns {string} SVG `<path>` `d` 
  */
 function buildSmoothSplinePath(points) {
   let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
@@ -42,7 +103,7 @@ function buildSmoothSplinePath(points) {
 }
 
 /**
- * 根据分桶总数与标签平均长度，计算底部 X 轴应当展示的均匀刻度下标列表。
+ * X 
  *
  * @param {Array<{ label?: string }>} slots
  * @returns {number[]}
@@ -64,9 +125,9 @@ function computeTickIndices(slots) {
 }
 
 /**
- * 基于非零活跃日的分位数阈值计算热力图 5 档色阶（0 ~ 4），避免单日极端峰值压缩其余活跃日的层次对比。
+ * 5 0 ~ 4 
  *
- * @param {number[]} nonZeroValues 已升序排列的正数 Token 列表
+ * @param {number[]} nonZeroValues Token 
  * @param {number} maxTokens
  * @returns {{ q1: number, q2: number, q3: number, maxTokens: number, count: number }}
  */
@@ -102,7 +163,7 @@ function resolveHeatmapLevel(tokens, thresholds) {
 }
 
 /**
- * 解析日期槽位的年份与月份信息（兼容真实时间戳 `startMs` 与测试简写 `label`）。
+ * `startMs` `label` 
  *
  * @param {object} slot
  * @returns {{ year: number, month: number, day: number }}
@@ -121,11 +182,11 @@ function parseSlotCalendarParts(slot) {
 }
 
 /**
- * 构建热力图顶部与周列对齐的月份刻度标签（自动跳过首尾过窄残月，防止相邻月份文字重叠）。
+ * 
  *
  * @param {Array<object>} slots
- * @param {number} firstDow 首日对应的星期行索引（0 = 周一 .. 6 = 周日）
- * @param {number} totalWeeks 总周列数
+ * @param {number} firstDow 0 = .. 6 = 
+ * @param {number} totalWeeks 
  * @returns {Array<{ col: number, text: string }>}
  */
 function buildHeatmapMonthTicks(slots, firstDow, totalWeeks) {
@@ -177,9 +238,7 @@ function buildHeatmapMonthTicks(slots, firstDow, totalWeeks) {
     if (totalWeeks > 16 && c.col >= totalWeeks - 1) continue;
     if (ticks.length > 0 && c.col < nextAllowedCol) continue;
     const showYear = crossYear && (c.month === 1 || ticks.length === 0);
-    const text = showYear
-      ? t('chart.trend.hmMonthYear', { yy: String(c.year).slice(-2), month: c.month })
-      : t('chart.trend.hmMonthOnly', { month: c.month });
+    const text = getTrendCopy().formatMonth(c.month, c.year, showYear);
     ticks.push({ col: c.col, text });
     nextAllowedCol = c.col + (showYear ? baseMinGap + 1 : baseMinGap);
   }
@@ -187,11 +246,11 @@ function buildHeatmapMonthTicks(slots, firstDow, totalWeeks) {
 }
 
 /**
- * 创建交互式历史趋势组件（<=90 天为 SVG 平滑曲线图，>90 天自动切换为类 GitHub 每日小格子热力图）。
+ * <=90 SVG >90 GitHub 
  *
  * @returns {{
- *   el: HTMLElement,
- *   update: (series?: Array<object>) => void
+ * el: HTMLElement,
+ * update: (series?: Array<object>) => void
  * }}
  */
 export function createTrendAreaChart() {
@@ -214,7 +273,7 @@ export function createTrendAreaChart() {
   svg.setAttribute('class', 'trend-svg');
   svg.setAttribute('aria-hidden', 'true');
 
-  // 垂直线性渐变（每实例独立 ID，避免多图表挂载时 SVG url(#...) 冲突）
+  // ID SVG url(#...)
   const gradId = `trend-area-grad-${++chartUidCounter}`;
   const defs = document.createElementNS(SVG_NS, 'defs');
   const grad = document.createElementNS(SVG_NS, 'linearGradient');
@@ -239,7 +298,7 @@ export function createTrendAreaChart() {
   defs.appendChild(grad);
   svg.appendChild(defs);
 
-  // 背景水平与垂直参考网格线（水平网格全宽贴边铺满 0..viewW）
+  // 0..viewW
   const hGridGroup = document.createElementNS(SVG_NS, 'g');
   hGridGroup.setAttribute('class', 'trend-grid');
   const hGridLines = [];
@@ -276,7 +335,7 @@ export function createTrendAreaChart() {
   peakDot.setAttribute('class', 'trend-peak-dot');
   svg.appendChild(peakDot);
 
-  // 悬停十字准星与焦点圆点
+  
   const hoverLine = document.createElementNS(SVG_NS, 'line');
   hoverLine.setAttribute('class', 'trend-hover-line');
   hoverLine.setAttribute('y1', '12');
@@ -292,7 +351,7 @@ export function createTrendAreaChart() {
 
   const peakPill = h('span', { className: 'trend-peak-pill text-mono', text: '0' });
 
-  // 共享悬停详情浮层卡片（曲线图与热力格子图共用）
+  
   const tipTimeEl = h('span', { className: 'trend-tip-time text-mono' });
   const tipCallsEl = h('span', { className: 'trend-tip-calls text-mono' });
   const tipTokensEl = h('strong', { className: 'trend-tip-tokens text-mono' });
@@ -309,38 +368,28 @@ export function createTrendAreaChart() {
     ]
   );
 
-  // 底部对齐刻度轴（曲线模式）
+  
   const xAxisEl = h('div', { className: 'trend-x-axis' });
   const plotStage = h('div', { className: 'trend-plot-stage' }, [peakPill, svg]);
 
-  // 类 GitHub 每日小格子热力图容器（> 90 天模式）
-  const wdayMonEl = h('span', { className: 'trend-hm-wday', text: t('chart.trend.wdayMon') });
-  const wdayWedEl = h('span', { className: 'trend-hm-wday', text: t('chart.trend.wdayWed') });
-  const wdayFriEl = h('span', { className: 'trend-hm-wday', text: t('chart.trend.wdayFri') });
-  const wdaySunEl = h('span', { className: 'trend-hm-wday', text: t('chart.trend.wdaySun') });
+  // GitHub > 90
+  const initTrendCopy = getTrendCopy();
+  const hmWeekdaySpans = initTrendCopy.weekdays.map((txt) =>
+    h('span', { className: 'trend-hm-wday', text: txt })
+  );
   const hmWeekdaysEl = h('div', { className: 'trend-hm-weekdays', 'aria-hidden': 'true' }, [
     h('span', { className: 'trend-hm-month-spacer' }),
-    wdayMonEl,
-    h('span', { className: 'trend-hm-wday', text: '' }),
-    wdayWedEl,
-    h('span', { className: 'trend-hm-wday', text: '' }),
-    wdayFriEl,
-    h('span', { className: 'trend-hm-wday', text: '' }),
-    wdaySunEl,
+    ...hmWeekdaySpans,
   ]);
   const hmMonthsEl = h('div', { className: 'trend-hm-months' });
-  const hmGridEl = h('div', {
-    className: 'trend-hm-grid',
-    role: 'grid',
-    'aria-label': t('chart.trend.hmAria'),
-  });
+  const hmGridEl = h('div', { className: 'trend-hm-grid', role: 'grid', 'aria-label': initTrendCopy.gridAria });
   const hmTrackEl = h('div', { className: 'trend-hm-track' }, [hmMonthsEl, hmGridEl]);
   const hmScrollEl = h('div', { className: 'trend-hm-scroll' }, [hmTrackEl]);
   const hmBodyEl = h('div', { className: 'trend-heatmap-body' }, [hmWeekdaysEl, hmScrollEl]);
 
   const hmSummaryEl = h('span', { className: 'trend-hm-summary text-mono', text: '' });
-  const hmLessEl = h('span', { text: t('chart.trend.hmLess') });
-  const hmMoreEl = h('span', { text: t('chart.trend.hmMore') });
+  const hmLessEl = h('span', { text: initTrendCopy.less });
+  const hmMoreEl = h('span', { text: initTrendCopy.more });
   const hmLegendEl = h('span', { className: 'trend-hm-legend', 'aria-hidden': 'true' }, [
     hmLessEl,
     h('span', { className: 'trend-hm-swatch lv-0' }),
@@ -367,8 +416,6 @@ export function createTrendAreaChart() {
   let currentPts = [];
   let currentIsHeatmap = false;
   let currentHeatmapWeeks = 0;
-  let currentHeatmapFirstDow = 0;
-  let currentHeatmapGapPx = 2;
   let currentCellEls = [];
   let tickElsByIdx = new Map();
   let hoveredIdx = -1;
@@ -376,11 +423,9 @@ export function createTrendAreaChart() {
   let lastRenderSig = '';
 
   function populateTooltipContent(slot) {
+    const tc = getTrendCopy();
     patchText(tipTimeEl, slot.fullLabel || slot.label || '--');
-    patchText(
-      tipCallsEl,
-      t('cons.callsCount', { calls: Math.max(0, Math.floor(Number(slot.calls) || 0)) })
-    );
+    patchText(tipCallsEl, `${Math.max(0, Math.floor(Number(slot.calls) || 0))}${tc.callsSuffix}`);
     const slotTok = safeSlotTokens(slot.tokens);
     patchText(tipTokensEl, `${formatTokensPrecise(slotTok)} tok`);
     const slotCost = Number.isFinite(Number(slot.costUsd)) ? Math.max(0, Number(slot.costUsd)) : 0;
@@ -400,11 +445,7 @@ export function createTrendAreaChart() {
     if (hasSubBreakdown) {
       patchText(
         tipSubEl,
-        t('chart.step.ioSplit', {
-          inTok: formatTokensPrecise(safeSlotTokens(slot.inputTokens)),
-          cacheTok: formatTokensPrecise(safeSlotTokens(slot.cacheReadTokens)),
-          outTok: formatTokensPrecise(safeSlotTokens(slot.outputTokens)),
-        })
+        `${tc.inLbl} ${formatTokensPrecise(safeSlotTokens(slot.inputTokens))} · ${tc.cacheLbl} ${formatTokensPrecise(safeSlotTokens(slot.cacheReadTokens))} · ${tc.outLbl} ${formatTokensPrecise(safeSlotTokens(slot.outputTokens))}`
       );
     }
   }
@@ -462,7 +503,7 @@ export function createTrendAreaChart() {
     const row = Number(targetCell.getAttribute('data-hm-row') || 0);
     const col = Number(targetCell.getAttribute('data-hm-col') || 0);
 
-    // 上半区（周一~周四）浮层停靠底部，下半区（周五~周日）停靠顶部，互不遮挡被悬停格子且永不越界裁剪
+    // ~ ~
     patchClasses(tooltipEl, {
       'is-hm-bottom': row <= 3,
       'is-hm-top': row > 3,
@@ -540,117 +581,21 @@ export function createTrendAreaChart() {
     showLineHoverAtIndex(idx);
   }
 
-  function findDirectHeatmapCell(e) {
+  function findHeatmapCellFromEvent(e) {
     let cur = e?.target || null;
     while (cur && cur !== hmGridEl) {
       const idxAttr = cur.getAttribute?.('data-slot-idx');
       if (idxAttr !== null && idxAttr !== undefined && idxAttr !== '') {
-        const idx = Number(idxAttr);
-        if (Number.isFinite(idx) && idx >= 0 && idx < currentSlots.length) {
-          return { idx, cellEl: cur };
-        }
+        return { idx: Number(idxAttr), cellEl: cur };
       }
       cur = cur.parentNode || null;
     }
     return null;
   }
 
-  function resolveHeatmapCellFromPointer(e) {
-    const directHit = findDirectHeatmapCell(e);
-    if (directHit) return directHit;
-
-    const clientX = Number(e?.clientX);
-    const clientY = Number(e?.clientY);
-    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
-      if (hoveredIdx >= 0 && hoveredIdx < currentSlots.length && currentCellEls[hoveredIdx]) {
-        return { idx: hoveredIdx, cellEl: currentCellEls[hoveredIdx] };
-      }
-      return null;
-    }
-
-    const rect = hmGridEl.getBoundingClientRect?.();
-    if (!rect || !(rect.width > 0) || !(rect.height > 0) || currentHeatmapWeeks <= 0) {
-      if (hoveredIdx >= 0 && hoveredIdx < currentSlots.length && currentCellEls[hoveredIdx]) {
-        return { idx: hoveredIdx, cellEl: currentCellEls[hoveredIdx] };
-      }
-      return null;
-    }
-
-    const W = currentHeatmapWeeks;
-    const G = currentHeatmapGapPx;
-    const relX = clientX - rect.left;
-    const relY = clientY - rect.top;
-    if (
-      relX < -(G + 1) ||
-      relX > rect.width + G + 1 ||
-      relY < -(G + 1) ||
-      relY > rect.height + G + 1
-    ) {
-      return null;
-    }
-
-    const pitchX = (rect.width + G) / W;
-    const pitchY = (rect.height + G) / 7;
-    const cellW = Math.max(1, pitchX - G);
-    const cellH = Math.max(1, pitchY - G);
-
-    function distanceToCell(c, r) {
-      const x0 = c * pitchX;
-      const y0 = r * pitchY;
-      const dx = relX < x0 ? x0 - relX : relX > x0 + cellW ? relX - (x0 + cellW) : 0;
-      const dy = relY < y0 ? y0 - relY : relY > y0 + cellH ? relY - (y0 + cellH) : 0;
-      return { chebyshev: Math.max(dx, dy), distSq: dx * dx + dy * dy };
-    }
-
-    // 指针滑入当前悬停格四周的空隙（gap）时保持原高亮，彻底消除跨格空隙闪烁与边缘微抖
-    if (hoveredIdx >= 0 && hoveredIdx < currentSlots.length && currentCellEls[hoveredIdx]) {
-      const curGridPos = currentHeatmapFirstDow + hoveredIdx;
-      const curCol = Math.floor(curGridPos / 7);
-      const curRow = curGridPos % 7;
-      if (distanceToCell(curCol, curRow).chebyshev <= G + 0.75) {
-        return { idx: hoveredIdx, cellEl: currentCellEls[hoveredIdx] };
-      }
-    }
-
-    // 快速扫过或初始落入格子间隙时，按网格步距吸附到最近的有效日期格
-    const approxCol = Math.max(0, Math.min(W - 1, Math.floor((relX + G * 0.5) / pitchX)));
-    const approxRow = Math.max(0, Math.min(6, Math.floor((relY + G * 0.5) / pitchY)));
-    const directSlotIdx = approxCol * 7 + approxRow - currentHeatmapFirstDow;
-    if (
-      directSlotIdx >= 0 &&
-      directSlotIdx < currentSlots.length &&
-      currentCellEls[directSlotIdx]
-    ) {
-      return { idx: directSlotIdx, cellEl: currentCellEls[directSlotIdx] };
-    }
-
-    // 首周补位或末周未来空白边缘：仅当仍在相邻有效格的间隙光晕内才吸附，深入纯空白角则清空
-    let bestIdx = -1;
-    let bestDistSq = Infinity;
-    for (let dc = -1; dc <= 1; dc++) {
-      const c = approxCol + dc;
-      if (c < 0 || c >= W) continue;
-      for (let dr = -1; dr <= 1; dr++) {
-        const r = approxRow + dr;
-        if (r < 0 || r > 6) continue;
-        const sIdx = c * 7 + r - currentHeatmapFirstDow;
-        if (sIdx < 0 || sIdx >= currentSlots.length || !currentCellEls[sIdx]) continue;
-        const d = distanceToCell(c, r);
-        if (d.chebyshev <= G + 1.5 && d.distSq < bestDistSq) {
-          bestDistSq = d.distSq;
-          bestIdx = sIdx;
-        }
-      }
-    }
-    if (bestIdx >= 0) {
-      return { idx: bestIdx, cellEl: currentCellEls[bestIdx] };
-    }
-    return null;
-  }
-
   function handleHeatmapPointer(e) {
     if (!currentIsHeatmap || !currentSlots.length) return;
-    const hit = resolveHeatmapCellFromPointer(e);
+    const hit = findHeatmapCellFromEvent(e);
     if (!hit || !Number.isFinite(hit.idx)) {
       clearHover();
       return;
@@ -715,8 +660,8 @@ export function createTrendAreaChart() {
   }
 
   /**
-   * 根据最新时间分桶序列重绘平滑曲线（<=90天/小时级）或类 GitHub 每日小格子热力图（>90天）。
-   */
+ * <=90 / GitHub >90 
+ */
   function update(series = []) {
     const slots =
       Array.isArray(series) && series.length >= 1
@@ -753,28 +698,20 @@ export function createTrendAreaChart() {
     const nonZeroVals = [];
 
     for (let i = 0; i < slots.length; i++) {
-      const tokVal = safeSlotTokens(slots[i]?.tokens);
-      if (tokVal > 0) {
+      const t = safeSlotTokens(slots[i]?.tokens);
+      if (t > 0) {
         activeDays++;
-        nonZeroVals.push(tokVal);
+        nonZeroVals.push(t);
       }
-      if (tokVal >= maxTokens) {
-        maxTokens = tokVal;
+      if (t >= maxTokens) {
+        maxTokens = t;
         peakIdx = i;
       }
     }
 
-    const locale = getEffectiveLocale();
-    patchText(wdayMonEl, t('chart.trend.wdayMon'));
-    patchText(wdayWedEl, t('chart.trend.wdayWed'));
-    patchText(wdayFriEl, t('chart.trend.wdayFri'));
-    patchText(wdaySunEl, t('chart.trend.wdaySun'));
-    patchAttr(hmGridEl, 'aria-label', t('chart.trend.hmAria'));
-    patchText(hmLessEl, t('chart.trend.hmLess'));
-    patchText(hmMoreEl, t('chart.trend.hmMore'));
-
+    const tc = getTrendCopy();
     const sig =
-      `${locale}|${useHeatmap ? 'hm' : `line:${viewW}`}|` +
+      `${getEffectiveLocale()}|${useHeatmap ? 'hm' : `line:${viewW}`}|` +
       slots
         .map(
           (s) =>
@@ -783,6 +720,12 @@ export function createTrendAreaChart() {
         .join('|');
 
     if (useHeatmap) {
+      tc.weekdays.forEach((txt, idx) => {
+        if (hmWeekdaySpans[idx]) patchText(hmWeekdaySpans[idx], txt);
+      });
+      patchAttr(hmGridEl, 'aria-label', tc.gridAria);
+      patchText(hmLessEl, tc.less);
+      patchText(hmMoreEl, tc.more);
       currentPts = [];
       if (sig !== lastRenderSig) {
         lastRenderSig = sig;
@@ -796,15 +739,12 @@ export function createTrendAreaChart() {
             : 0;
         const totalCells = firstDow + slots.length;
         const totalWeeks = Math.max(1, Math.ceil(totalCells / 7));
-        const gapPx = totalWeeks > 42 ? 1.5 : 2;
         currentHeatmapWeeks = totalWeeks;
-        currentHeatmapFirstDow = firstDow;
-        currentHeatmapGapPx = gapPx;
 
         patchStyleVar(hmBodyEl, '--hm-weeks', String(totalWeeks));
-        patchStyleVar(hmBodyEl, '--hm-gap', `${gapPx}px`);
+        patchStyleVar(hmBodyEl, '--hm-gap', totalWeeks > 42 ? '1.5px' : '2px');
 
-        // 重建顶部对齐月份标签
+        
         while (hmMonthsEl.firstChild) hmMonthsEl.removeChild(hmMonthsEl.firstChild);
         const monthTicks = buildHeatmapMonthTicks(slots, firstDow, totalWeeks);
         for (const mt of monthTicks) {
@@ -813,7 +753,7 @@ export function createTrendAreaChart() {
           hmMonthsEl.appendChild(mEl);
         }
 
-        // 重建 7 行 × N 周列的每日小格子（一格一天）
+        // 7 × N
         while (hmGridEl.firstChild) hmGridEl.removeChild(hmGridEl.firstChild);
         hoveredCellEl = null;
         currentCellEls = new Array(slots.length);
@@ -854,13 +794,8 @@ export function createTrendAreaChart() {
       const peakSlot = slots[peakIdx];
       const summaryText =
         maxTokens > 0 && peakSlot?.label
-          ? t('chart.trend.hmActivePeak', {
-              active: activeDays,
-              total: slots.length,
-              label: peakSlot.label,
-              tokens: formatTokensPrecise(maxTokens),
-            })
-          : t('chart.trend.hmActiveZero', { total: slots.length });
+          ? `${tc.activeLbl} ${activeDays}/${slots.length} ${tc.daysUnit} · ${tc.peakLbl} ${peakSlot.label} · ${formatTokensPrecise(maxTokens)}`
+          : `${tc.activeLbl} 0/${slots.length} ${tc.daysUnit}`;
       patchText(hmSummaryEl, summaryText);
 
       if (hoveredIdx >= slots.length) {
@@ -871,7 +806,7 @@ export function createTrendAreaChart() {
       return;
     }
 
-    // --- <= 90 天（或整点小时级）：渲染平滑面积曲线图（1:1 贴边对齐） ---
+    // --- <= 90 1:1 ---
     currentCellEls = [];
     const { leftX, rightX, spanX } = resolvePlotBounds(viewW);
     const denom = Math.max(1, maxTokens);
@@ -902,7 +837,7 @@ export function createTrendAreaChart() {
       patchAttr(linePath, 'd', lineD);
       patchAttr(areaPath, 'd', areaD);
 
-      // 渲染与底部刻度对齐的垂直参考网格线及底部 X 轴标签（起止标签严格左右贴边）
+      
       const tickIndices = computeTickIndices(slots);
       while (vGridGroup.firstChild) vGridGroup.removeChild(vGridGroup.firstChild);
       while (xAxisEl.firstChild) xAxisEl.removeChild(xAxisEl.firstChild);
@@ -937,7 +872,7 @@ export function createTrendAreaChart() {
         tickElsByIdx.set(tIdx, tickEl);
       }
 
-      // 渲染采样点小圆点（当点数 <= 36 时展示，突出有消耗的整点/日期）
+      // <= 36 /
       while (dotsGroup.firstChild) dotsGroup.removeChild(dotsGroup.firstChild);
       if (pts.length <= 36) {
         for (let i = 0; i < pts.length; i++) {
@@ -959,10 +894,7 @@ export function createTrendAreaChart() {
     const peakSlot = slots[peakIdx];
     const peakText =
       maxTokens > 0 && peakSlot?.label
-        ? t('chart.trend.peakPill', {
-            label: peakSlot.label,
-            tokens: formatTokensPrecise(maxTokens),
-          })
+        ? `${tc.peakLbl} ${peakSlot.label} · ${formatTokensPrecise(maxTokens)}`
         : formatTokensPrecise(maxTokens);
     patchText(peakPill, peakText);
     const pctLeft = Math.max(12, Math.min(88, (peakPt.x / viewW) * 100));

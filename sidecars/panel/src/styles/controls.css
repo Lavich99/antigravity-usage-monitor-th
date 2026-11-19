@@ -1,17 +1,17 @@
 /*
- * 通用交互控件与顶栏导航样式表 (controls.css).
- * 包含：
- * 1. 顶部会话控制栏 (.session-header, .status-tag, .icon-btn, .update-badge-btn)
- * 2. 顶部唯一长药丸导航栏 (.long-pill-nav, .pill-glider, .pill-tab)
- * 3. 定制下拉选择器 (.custom-select)
- * 4. 定制步进数字输入框 (.number-input)
- * 5. 定制日期时间选择器 (.datetime-picker)
- * 6. 微边框分段控制器 (.segmented)
- * 7. 独立轨道槽自定义滚动条 (.custom-scroll-host)
- * 8. 设置表单行与主次操作按钮 (.form-row, .btn-primary, .btn-secondary, .cloud-actions-row)
+ * (controls.css).
+ * 
+ * 1. (.session-header, .status-tag, .icon-btn, .update-badge-btn)
+ * 2. (.long-pill-nav, .pill-glider, .pill-tab)
+ * 3. (.custom-select)
+ * 4. (.number-input)
+ * 5. (.datetime-picker)
+ * 6. (.segmented)
+ * 7. (.custom-scroll-host)
+ * 8. (.form-row, .btn-primary, .btn-secondary, .cloud-actions-row)
  */
 
-/* --- 1. 顶部会话控制栏与二级代理切换条 (Top Session Control Header & Agent Scope Bar) --- */
+/* --- 1. (Top Session Control Header & Agent Scope Bar) --- */
 .top-session-stack {
   display: flex;
   flex-direction: column;
@@ -114,18 +114,16 @@
   transform: scale(0.95);
 }
 
-/* --- 2. 顶部药丸导航栏 (Top Long-Pill Navigation Bar) --- */
+/* --- 2. (Top Long-Pill Navigation Bar) --- */
 .long-pill-nav {
   position: relative;
-  container-type: inline-size;
   display: grid;
-  grid-template-columns: repeat(var(--pill-count, 4), minmax(0, 1fr));
+  grid-template-columns: repeat(var(--pill-count, 4), 1fr);
   align-items: center;
   padding: 3px;
   background: var(--surface-panel);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-pill);
-  overflow: hidden;
   user-select: none;
 }
 
@@ -151,17 +149,15 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-width: 0;
-  min-height: calc(26px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-2);
   border: none;
   background: transparent;
   color: var(--text-secondary);
   font-size: var(--fs-base);
   font-weight: 500;
-  line-height: 1.15;
+  line-height: 1;
   border-radius: var(--radius-pill);
-  overflow: hidden;
   cursor: pointer;
   white-space: nowrap;
   transition: color var(--dur-instant) var(--ease-fast);
@@ -175,58 +171,18 @@
   flex-shrink: 0;
 }
 
-.pill-tab-label {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  line-height: 1.2;
-}
-
+.pill-tab-label,
 .pill-tab-badge {
   display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
-  min-height: 14px;
-  line-height: 1.15;
+  height: 14px;
+  line-height: 1;
+}
+
+.pill-tab-badge {
   margin-left: -2px;
   font-size: var(--fs-base-sm);
   opacity: 0.85;
-}
-
-@container (max-width: 30em) {
-  .pill-tab {
-    gap: 3.5px;
-    padding: 2px 4px;
-    font-size: var(--fs-md);
-  }
-  .pill-tab .svg-icon {
-    width: 13px;
-    height: 13px;
-  }
-  .pill-tab-badge {
-    display: none !important;
-  }
-}
-
-@container (max-width: 23em) {
-  .pill-tab {
-    gap: 0;
-    padding: 2px 3px;
-  }
-  .pill-tab .svg-icon {
-    display: none;
-  }
-}
-
-@container (max-width: 17.5em) {
-  .pill-tab .svg-icon {
-    display: block;
-  }
-  .pill-tab-label {
-    display: none;
-  }
 }
 
 .pill-tab:hover {
@@ -248,7 +204,7 @@
   opacity: 0.92;
 }
 
-/* --- 3. 定制下拉选择器 (Bespoke Custom Select，零原生 <select>) --- */
+/* --- 3. (Bespoke Custom Select <select>) --- */
 .custom-select {
   position: relative;
   display: inline-flex;
@@ -267,8 +223,8 @@
   justify-content: space-between;
   gap: var(--space-2);
   width: 100%;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px 6px;
+  height: 24px;
+  padding: 0 6px;
   background: transparent;
   color: var(--text-primary);
   border: none;
@@ -390,11 +346,11 @@
   stroke-width: 2.4;
 }
 
-/* --- 4. 定制步进数字框 (Bespoke Custom Number Input，零原生 <input type="number">) --- */
+/* --- 4. (Bespoke Custom Number Input <input type="number">) --- */
 .number-input {
   display: inline-flex;
   align-items: stretch;
-  min-height: calc(28px * var(--ui-font-scale, 1));
+  height: 28px;
   background: var(--surface-panel);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
@@ -440,7 +396,7 @@
   outline: none;
 }
 
-/* --- 5. 定制日期时间选择器 (Bespoke Custom DateTime Picker) --- */
+/* --- 5. (Bespoke Custom DateTime Picker) --- */
 .datetime-picker {
   position: relative;
   display: inline-flex;
@@ -454,8 +410,8 @@
   justify-content: space-between;
   gap: var(--space-2);
   width: 100%;
-  min-height: calc(26px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-2);
   background: var(--surface-panel);
   color: var(--text-primary);
   border: 1px solid var(--border-hairline);
@@ -508,7 +464,7 @@
 }
 
 .dt-day {
-  min-height: calc(22px * var(--ui-font-scale, 1));
+  height: 22px;
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -569,7 +525,7 @@
   color: var(--text-primary);
 }
 
-/* --- 6. 微边框分段控制器 (Micro-Bezel Segmented Control) --- */
+/* --- 6. (Micro-Bezel Segmented Control) --- */
 .segmented {
   display: inline-flex;
   align-items: center;
@@ -584,8 +540,8 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  padding: 2px 7px;
+  height: 22px;
+  padding: 0 7px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -608,7 +564,7 @@
   font-weight: 600;
 }
 
-/* --- 7. 独立槽位自定义滚动条 (Bespoke Custom Scrollbar) --- */
+/* --- 7. (Bespoke Custom Scrollbar) --- */
 .custom-scroll-host {
   position: relative;
   display: flex;
@@ -676,7 +632,7 @@
   background: color-mix(in srgb, var(--accent-primary) 72%, transparent);
 }
 
-/* --- 8. 设置表单与按钮控件 (Settings Form & Buttons) --- */
+/* --- 8. (Settings Form & Buttons) --- */
 .form-row {
   display: flex;
   flex-direction: column;
@@ -694,8 +650,8 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 3px var(--space-5);
+  height: 28px;
+  padding: 0 var(--space-5);
   background: var(--accent-primary);
   color: var(--text-inverse);
   border: 1px solid var(--accent-primary);
@@ -719,8 +675,8 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 3px var(--space-4);
+  height: 28px;
+  padding: 0 var(--space-4);
   background: var(--surface-panel);
   color: var(--text-primary);
   border: 1px solid var(--border-strong);
@@ -758,8 +714,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: calc(22px * var(--ui-font-scale, 1));
-  padding: 2px 7px;
+  height: 22px;
+  padding: 0 7px;
   font-size: var(--fs-md);
   font-weight: 600;
   border-radius: var(--radius-xs);
@@ -779,7 +735,7 @@
   transform: scale(0.96);
 }
 
-/* --- 9. 顶部栏定制面板专属表单与排序槽位控件 (Topbar Customization Controls) --- */
+/* --- 9. (Topbar Customization Controls) --- */
 .settings-inline-row {
   display: flex;
   align-items: center;
@@ -788,12 +744,18 @@
   min-height: 26px;
 }
 
+.topbar-header-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .btn-ghost-sm {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(20px * var(--ui-font-scale, 1));
-  padding: 1px 6px;
+  height: 20px;
+  padding: 0 6px;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text-secondary);
@@ -819,13 +781,40 @@
   cursor: default;
 }
 
+.topbar-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.topbar-slot-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 6px;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  transition: border-color var(--dur-instant) var(--ease-fast);
+}
+
+.topbar-slot-row:focus-within,
+.topbar-slot-row:has(.is-open) {
+  z-index: 30;
+  border-color: var(--border-strong);
+}
+
+.topbar-slot-row .select-menu {
+  max-height: 216px;
+}
+
 .slot-index-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: calc(16px * var(--ui-font-scale, 1));
-  min-height: calc(16px * var(--ui-font-scale, 1));
-  padding: 0 3px;
+  width: 16px;
+  height: 16px;
   font-size: var(--fs-sm);
   font-weight: 600;
   font-variant-numeric: tabular-nums;

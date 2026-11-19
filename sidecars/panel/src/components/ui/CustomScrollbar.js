@@ -1,5 +1,5 @@
 /**
- * @fileoverview Bespoke custom scrollbar component (零原生滚动条).
+ * @fileoverview Bespoke custom scrollbar component ( ).
  * Hides native OS scrollbars completely and renders a precision 4px floating
  * rail + GPU-translated thumb with drag and track-jump support.
  */

@@ -6,7 +6,6 @@
  */
 
 import {
-  formatAgentBadgeText,
   formatCachePct,
   formatMetric,
   formatTokens,
@@ -19,16 +18,37 @@ import {
   sampleSummary,
   speedReasonText,
 } from '../core/formatters.js';
-import { isEnglishLocale, t } from '../i18n/index.js';
-import { OVERVIEW_METRIC_KEYS, TOPBAR_SLOT_KEYS } from '../../shared/settings-normalization.mjs';
-import {
-  formatCompactCapsuleCost,
-  formatCompactCapsuleTtft,
-  resolveCapsuleQuotaSlotPct,
-} from '../../shared/telemetry-display-rules.mjs';
+import { isEnglishLocale, isThaiLocale, t } from '../i18n/index.js';
 
-export { OVERVIEW_METRIC_KEYS, formatCompactCapsuleCost, formatCompactCapsuleTtft };
-export const CAPSULE_METRIC_KEYS = TOPBAR_SLOT_KEYS;
+export const CAPSULE_METRIC_KEYS = Object.freeze([
+  'gemini_5h',
+  'context',
+  'tps',
+  'ttft',
+  'avg_tps',
+  'cost',
+  'session_cost',
+  'cache_hit',
+  'session_tokens',
+  'quota_auto',
+  'gemini_weekly',
+  'claude_5h',
+  'claude_weekly',
+]);
+
+export const OVERVIEW_METRIC_KEYS = Object.freeze([
+  'tps',
+  'ttft',
+  'avg_tps',
+  'step_cost',
+  'session_cost',
+  'cache_hit',
+  'session_tokens',
+  'context_usage',
+  'quota_tightest',
+]);
+
+const THIRD_PARTY_FAMILY_RE = /claude|gpt|anthropic|openai|3p|sonnet|opus|haiku/i;
 
 export function getCapsuleMetricOptions() {
   return CAPSULE_METRIC_KEYS.map((key) => ({
@@ -50,8 +70,8 @@ export function resolveQuotaCapsuleSummary(quotas) {
   const weekly = quotas.weekly;
   const pools = Array.isArray(quotas.pools) ? quotas.pools : [];
   const candidates = [];
-  const defaultPoolName = isEnglishLocale() ? 'Active Pool' : '当前池';
-  const wkTag = isEnglishLocale() ? 'Wk' : '周';
+  const defaultPoolName = 'Active Pool';
+  const wkTag = 'Wk';
 
   if (activePool && Number.isFinite(Number(activePool.remainingPct))) {
     candidates.push({
@@ -70,7 +90,7 @@ export function resolveQuotaCapsuleSummary(quotas) {
   if (!candidates.length && weekly && Number.isFinite(Number(weekly.remainingPct))) {
     candidates.push({
       pct: Number(weekly.remainingPct),
-      label: weekly.poolFamily || (isEnglishLocale() ? 'Weekly' : '周限额'),
+      label: weekly.poolFamily || (isThaiLocale() ? 'รายสัปดาห์' : 'Weekly'),
       windowTag: wkTag,
     });
   }
@@ -90,6 +110,7 @@ export function resolveQuotaCapsuleSummary(quotas) {
   const tightest = candidates[0];
   const runnerUp = candidates.length > 1 ? candidates[1] : null;
   const rounded = Math.max(0, Math.min(100, Math.round(tightest.pct)));
+  const exactPct = Math.max(0, Math.min(100, +Number(tightest.pct).toFixed(2)));
   const runnerPct = runnerUp ? Math.max(0, Math.min(100, Math.round(runnerUp.pct))) : null;
   const subLabelText = runnerUp
     ? runnerUp.label === tightest.label
@@ -98,6 +119,7 @@ export function resolveQuotaCapsuleSummary(quotas) {
     : `${tightest.label} · ${tightest.windowTag}`;
   return {
     roundedPct: rounded,
+    exactPct,
     shortText: t('capsule.quotaLeft', { pct: rounded }),
     subLabelText,
     detailText: candidates
@@ -110,23 +132,174 @@ export function resolveQuotaCapsuleSummary(quotas) {
 }
 
 /**
- * 解析指定模型池（Gemini 或 Claude & GPT）与指定时间窗口（5h 或周额度）的剩余百分比摘要。
+ * Gemini Claude & GPT 5h 
  *
  * @param {object|null|undefined} quotas
  * @param {'gemini_5h'|'gemini_weekly'|'claude_5h'|'claude_weekly'} slotKey
  * @returns {{ roundedPct: number, shortText: string } | null}
  */
 export function resolveSpecificQuotaSlotSummary(quotas, slotKey) {
-  const rounded = resolveCapsuleQuotaSlotPct(quotas, slotKey);
-  if (rounded == null) return null;
+  if (!quotas) return null;
+  const pools = Array.isArray(quotas.pools) ? quotas.pools : [];
+  const activePool = quotas.activePool || null;
+  const isClaude = slotKey.startsWith('claude_');
+  const isWeekly = slotKey.endsWith('_weekly');
+  let rawPct = null;
+
+  if (isClaude) {
+    const claudePool =
+      pools.find((p) => p?.poolKey === 'Claude & GPT') ||
+      pools.find((p) => THIRD_PARTY_FAMILY_RE.test(String(p?.poolKey || p?.poolLabel || '')));
+    const cand = isWeekly ? claudePool?.weeklyRemainingPct : claudePool?.remainingPct;
+    if (cand != null && Number.isFinite(Number(cand))) {
+      rawPct = Number(cand);
+    } else if (
+      activePool &&
+      THIRD_PARTY_FAMILY_RE.test(String(activePool.family || activePool.poolLabel || ''))
+    ) {
+      const fb = isWeekly ? activePool.weeklyRemainingPct : activePool.remainingPct;
+      if (fb != null && Number.isFinite(Number(fb))) {
+        rawPct = Number(fb);
+      }
+    }
+  } else {
+    const stdGemini =
+      pools.find((p) => p?.poolKey === 'Gemini') ||
+      pools.find(
+        (p) =>
+          /gemini/i.test(String(p?.poolKey || p?.poolLabel || '')) &&
+          !/carbon|argon/i.test(String(p?.poolKey || ''))
+      );
+    const geminiFamilyPools = pools.filter((p) =>
+      /gemini|carbon|argon/i.test(String(p?.poolKey || p?.poolLabel || ''))
+    );
+    const primaryCand = isWeekly ? stdGemini?.weeklyRemainingPct : stdGemini?.remainingPct;
+    if (primaryCand != null && Number.isFinite(Number(primaryCand))) {
+      rawPct = Number(primaryCand);
+    } else {
+      const familyVals = geminiFamilyPools
+        .map((p) => (isWeekly ? p?.weeklyRemainingPct : p?.remainingPct))
+        .filter((v) => v != null && Number.isFinite(Number(v)))
+        .map(Number);
+      if (familyVals.length > 0) {
+        rawPct = Math.min(...familyVals);
+      } else if (
+        activePool &&
+        !THIRD_PARTY_FAMILY_RE.test(String(activePool.family || activePool.poolLabel || ''))
+      ) {
+        const fb = isWeekly ? activePool.weeklyRemainingPct : activePool.remainingPct;
+        if (fb != null && Number.isFinite(Number(fb))) {
+          rawPct = Number(fb);
+        }
+      }
+      if (
+        rawPct == null &&
+        isWeekly &&
+        quotas.weekly &&
+        !THIRD_PARTY_FAMILY_RE.test(String(quotas.weekly.poolFamily || '')) &&
+        quotas.weekly.remainingPct != null &&
+        Number.isFinite(Number(quotas.weekly.remainingPct))
+      ) {
+        rawPct = Number(quotas.weekly.remainingPct);
+      }
+    }
+  }
+
+  if (rawPct == null || !Number.isFinite(rawPct)) return null;
+  const rounded = Math.max(0, Math.min(100, Math.round(rawPct)));
+  const exactPct = Math.max(0, Math.min(100, +Number(rawPct).toFixed(2)));
   return {
     roundedPct: rounded,
+    exactPct,
     shortText: t('capsule.quotaLeft', { pct: rounded }),
   };
 }
 
+export function formatCompactCapsuleCost(costUsd) {
+  if (costUsd == null || !Number.isFinite(Number(costUsd))) return '--';
+  const val = Math.max(0, Number(costUsd));
+  if (val === 0) return '$0.00';
+  if (val < 0.001) return '<$0.001';
+  if (val < 1) return `$${val.toFixed(3)}`;
+  if (val < 100) return `$${val.toFixed(2)}`;
+  return `$${Math.round(val)}`;
+}
+
+export function formatCapsulePctText(val) {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return '--%';
+  return `${Math.max(0, Math.min(100, num)).toFixed(2)}%`;
+}
+
+function formatCapsuleTpsText(val) {
+  const num = Number(val);
+  return `${num >= 100 ? Math.round(num) : num.toFixed(1)} t/s`;
+}
+
+function formatCapsuleIntPctText(val) {
+  return `${Math.round(Number(val || 0))}%`;
+}
+
+export function formatCompactCapsuleTtft(ttftSec) {
+  if (ttftSec == null || !Number.isFinite(Number(ttftSec)) || Number(ttftSec) < 0) return '--s';
+  const val = Number(ttftSec);
+  if (val < 1) return `${val.toFixed(2)}s`;
+  if (val < 100) return `${val.toFixed(1)}s`;
+  return `${Math.round(val)}s`;
+}
+
+const CTX_RING_SEGMENT_DEFS = [
+  { key: 'assistant', cls: 'seg-assistant', getVal: (c) => Number(c.assistantTokens || 0) },
+  { key: 'toolResults', cls: 'seg-tool-results', getVal: (c) => Number(c.toolResultsTokens || 0) },
+  {
+    key: 'userInput',
+    cls: 'seg-user-input',
+    getVal: (c) => Number(c.userInputTokens ?? c.messagesTokens ?? 0),
+  },
+  { key: 'subagent', cls: 'seg-subagent-msg', getVal: (c) => Number(c.subagentTokens || 0) },
+  { key: 'checkpoint', cls: 'seg-checkpoint', getVal: (c) => Number(c.checkpointTokens || 0) },
+  { key: 'systemPrompt', cls: 'seg-system-prompt', getVal: (c) => Number(c.systemPromptTokens || 0) },
+  { key: 'systemTools', cls: 'seg-system-tools', getVal: (c) => Number(c.systemToolsTokens || 0) },
+  { key: 'mcpTools', cls: 'seg-mcp-tools', getVal: (c) => Number(c.mcpToolsTokens || 0) },
+  { key: 'skills', cls: 'seg-skills', getVal: (c) => Number(c.skillsTokens || 0) },
+  { key: 'userRules', cls: 'seg-user-rules', getVal: (c) => Number(c.userRulesTokens || 0) },
+];
+
+export function resolveContextRingSegments(contextData, usedPct, ringCircumference) {
+  if (!contextData || typeof contextData !== 'object') return null;
+  const pct = Math.max(0, Math.min(100, Number(usedPct || 0)));
+  if (!(pct > 0) || !(ringCircumference > 0)) return null;
+
+  const active = [];
+  let totalVal = 0;
+  for (let i = 0; i < CTX_RING_SEGMENT_DEFS.length; i += 1) {
+    const def = CTX_RING_SEGMENT_DEFS[i];
+    const val = Math.max(0, Number(def.getVal(contextData) || 0));
+    if (val > 0) {
+      totalVal += val;
+      active.push({ cls: def.cls, val, defaultOrder: i });
+    }
+  }
+  if (!(totalVal > 0) || active.length === 0) return null;
+
+  active.sort((a, b) => b.val - a.val || a.defaultOrder - b.defaultOrder);
+  const totalArc = ringCircumference * (pct / 100);
+  const gapStr = (ringCircumference + 2).toFixed(2);
+  let cumOffset = 0;
+  return active.map((seg) => {
+    const segArc = totalArc * (seg.val / totalVal);
+    const out = {
+      cls: seg.cls,
+      dashArray: `${segArc.toFixed(2)} ${gapStr}`,
+      dashOffset: (-cumOffset).toFixed(2),
+    };
+    cumOffset += segArc;
+    return out;
+  });
+}
+
 /**
- * 解析顶栏/输入框精简胶囊单槽位展示结构。
+ * / 
  *
  * @param {string} metricKey
  * @param {object} slotCtx
@@ -168,14 +341,23 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
     const isDanger = slotCtx.usedPct >= 88;
     const isWarn = !isDanger && slotCtx.usedPct >= 70;
     const toneClass = isDanger ? 'tone-danger' : isWarn ? 'tone-warn' : '';
+    const ringSegments = resolveContextRingSegments(
+      slotCtx.context,
+      slotCtx.usedPct,
+      ringCircumference
+    );
     return {
       hidden: false,
       metric: 'context',
       segClass: 'wm-cap-slot wm-ctx-seg',
       textClass: 'wm-slot-text wm-ctx-pct',
       showRing: true,
+      ringSegments,
       dashOffset: slotCtx.dashOffset,
-      text: `${Math.round(slotCtx.usedPct)}%`,
+      text: formatCapsulePctText(slotCtx.usedPct),
+      animSpec: Number.isFinite(Number(slotCtx.usedPct))
+        ? { value: Math.max(0, Math.min(100, Number(slotCtx.usedPct))), format: formatCapsulePctText }
+        : null,
       toneClass,
       running: false,
       warn: isWarn,
@@ -202,7 +384,7 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
     const hasValidTps = Number.isFinite(slotCtx.tps) && slotCtx.tps > 0;
     const toneClass = hasValidTps ? getSpeedToneClass(slotCtx.tps) : '';
     const tpsText = hasValidTps
-      ? `${slotCtx.tps >= 100 ? Math.round(slotCtx.tps) : slotCtx.tps.toFixed(1)} t/s`
+      ? formatCapsuleTpsText(slotCtx.tps)
       : slotCtx.isRunning
         ? t('capsule.tpsRunning')
         : t('capsule.tpsIdle');
@@ -214,6 +396,7 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
       showRing: false,
       dashOffset: ringCircumference,
       text: tpsText,
+      animSpec: hasValidTps ? { value: Number(slotCtx.tps), format: formatCapsuleTpsText } : null,
       toneClass,
       running: Boolean(slotCtx.isRunning),
       warn: toneClass === 'tone-warn',
@@ -232,7 +415,8 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
       textClass: 'wm-slot-text wm-speed-text',
       showRing: false,
       dashOffset: ringCircumference,
-      text: valid ? `${avgVal >= 100 ? Math.round(avgVal) : avgVal.toFixed(1)} t/s` : '-- t/s',
+      text: valid ? formatCapsuleTpsText(avgVal) : '-- t/s',
+      animSpec: valid ? { value: Number(avgVal), format: formatCapsuleTpsText } : null,
       toneClass,
       running: false,
       warn: toneClass === 'tone-warn',
@@ -253,6 +437,7 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
       showRing: false,
       dashOffset: ringCircumference,
       text: valid ? formatCompactCapsuleTtft(numVal) : '--s',
+      animSpec: valid ? { value: numVal, format: formatCompactCapsuleTtft } : null,
       toneClass,
       running: false,
       warn: toneClass === 'tone-warn',
@@ -278,6 +463,10 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
       showRing: false,
       dashOffset: ringCircumference,
       text: slotCtx.hasTelemetry ? formatCompactCapsuleCost(costVal) : '--',
+      animSpec:
+        slotCtx.hasTelemetry && costVal != null && Number.isFinite(Number(costVal)) && Number(costVal) >= 0.001
+          ? { value: Number(costVal), format: formatCompactCapsuleCost }
+          : null,
       toneClass,
       running: false,
       warn: toneClass === 'tone-warn',
@@ -297,7 +486,8 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
       textClass: 'wm-slot-text wm-cache-text',
       showRing: false,
       dashOffset: ringCircumference,
-      text: valid ? `${Math.round(numVal)}%` : '--%',
+      text: valid ? formatCapsuleIntPctText(numVal) : '--%',
+      animSpec: valid ? { value: numVal, format: formatCapsuleIntPctText } : null,
       toneClass,
       running: false,
       warn: toneClass === 'tone-warn',
@@ -316,6 +506,7 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
       showRing: false,
       dashOffset: ringCircumference,
       text: valid ? formatTokens(Number(tokVal)) : '--',
+      animSpec: valid ? { value: Number(tokVal), format: formatTokens } : null,
       toneClass: '',
       running: false,
       warn: false,
@@ -328,17 +519,40 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
     : metricKey === 'quota_auto'
       ? resolveQuotaCapsuleSummary(slotCtx.quotas)
       : resolveSpecificQuotaSlotSummary(slotCtx.quotas, metricKey);
-  const isDanger = Boolean(quotaSum && quotaSum.roundedPct <= 15);
-  const isWarn = Boolean(quotaSum && !isDanger && quotaSum.roundedPct <= 30);
+  const quotaMode = slotCtx.quotaDisplayMode === 'used' ? 'used' : 'left';
+  if (!quotaSum) {
+    return {
+      hidden: false,
+      metric: metricKey,
+      segClass: 'wm-cap-slot wm-ctx-seg wm-seg-quota',
+      textClass: 'wm-slot-text wm-ctx-pct wm-quota-text',
+      showRing: true,
+      dashOffset: ringCircumference,
+      text: '--%',
+      toneClass: '',
+      running: false,
+      warn: false,
+      danger: false,
+    };
+  }
+  const remainingPct = Math.max(0, Math.min(100, quotaSum.exactPct ?? quotaSum.roundedPct));
+  const displayPct = Math.max(
+    0,
+    Math.min(100, +(quotaMode === 'used' ? 100 - remainingPct : remainingPct).toFixed(2))
+  );
+  const quotaDashOffset = +(ringCircumference * (1 - displayPct / 100)).toFixed(2);
+  const isDanger = remainingPct <= 15;
+  const isWarn = !isDanger && remainingPct <= 30;
   const toneClass = isDanger ? 'tone-danger' : isWarn ? 'tone-warn' : '';
   return {
     hidden: false,
     metric: metricKey,
-    segClass: 'wm-cap-slot wm-seg-quota',
-    textClass: 'wm-slot-text wm-quota-text',
-    showRing: false,
-    dashOffset: ringCircumference,
-    text: quotaSum ? quotaSum.shortText : t('capsule.quotaUnknown'),
+    segClass: 'wm-cap-slot wm-ctx-seg wm-seg-quota',
+    textClass: 'wm-slot-text wm-ctx-pct wm-quota-text',
+    showRing: true,
+    dashOffset: quotaDashOffset,
+    text: formatCapsulePctText(displayPct),
+    animSpec: { value: displayPct, format: formatCapsulePctText },
     toneClass,
     running: false,
     warn: isWarn,
@@ -346,20 +560,18 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
   };
 }
 
-function resolveActiveBadgeText(active) {
-  if (!active?.activeAgentBadge && !active?.activeAgentKind) return '';
-  return formatAgentBadgeText({
-    agentKind:
-      active.activeAgentKind ||
-      (!active.activeAgentId || active.activeAgentId === 'main' ? 'main' : 'subagent'),
-    agentOrdinal: Number(active.activeAgentOrdinal || 0),
-    isMain: !active.activeAgentId || active.activeAgentId === 'main',
-    badgeText: active.activeAgentBadge,
-  });
+function translateRawAgentBadge(rawBadge) {
+  if (!rawBadge) return '';
+  const str = String(rawBadge).trim();
+  if (str === 'Main') return t('fmt.mainBadge');
+  const m = str.match(/^Sub\s*(\d+)$/i);
+  if (m) return t('fmt.subBadge', { index: m[1] });
+  if (str.toLowerCase() === 'sub') return t('fmt.subBadgeShort');
+  return str;
 }
 
 /**
- * 解析实时监控第一行矩阵单个单元格的展示数据。
+ * 
  *
  * @param {string} metricKey
  * @param {{ active?: object, ctx?: object, quotas?: object, settings?: object, hasSubagents?: boolean }} cellCtx
@@ -377,7 +589,7 @@ export function resolveOverviewMetricCell(metricKey, cellCtx = {}) {
       fallback: t('fmt.unknownModel'),
     }).text;
     const reason = speedReasonText(active.latestSpeedReason);
-    const badgeStr = resolveActiveBadgeText(active);
+    const badgeStr = translateRawAgentBadge(active.activeAgentBadge);
     const modelAndAgent =
       hasSubagents && badgeStr ? `[${badgeStr}] ${activeModelDisplay}` : activeModelDisplay;
     const hasSpeed = Number.isFinite(active.latestTokPerSec) && Number(active.latestTokPerSec) > 0;

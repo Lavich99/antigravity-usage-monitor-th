@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isEquivalentTelemetry } from '../src/store/telemetryStore.js';
+import fs from 'node:fs';
+import vm from 'node:vm';
 import { backendHarness } from './backend-harness.mjs';
 
 const FLASH = 'MODEL_PLACEHOLDER_M318';
@@ -284,9 +285,14 @@ test('exhausted 0% bucket omitting remainingFraction in proto3 is reported as 10
 });
 
 test('telemetryStore isEquivalentTelemetry detects quota changes in non-active pools', () => {
-  const compare = isEquivalentTelemetry;
+  const source = fs.readFileSync(new URL('../src/store/telemetryStore.js', import.meta.url), 'utf8');
+  const fn = source.slice(
+    source.indexOf('function isEquivalentTelemetry'),
+    source.indexOf('export async function fetchTelemetry')
+  );
+  const ctx = {};
+  vm.runInNewContext(fn + '\nglobalThis.compare=isEquivalentTelemetry;', ctx);
 
-  const ctx = { compare };
   const a = {
     account: { tierName: 'Google AI Pro', planName: 'Pro' },
     quotas: {

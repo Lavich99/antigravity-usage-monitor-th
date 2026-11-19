@@ -1,11 +1,11 @@
 /**
- * @fileoverview Antigravity Hub / Language Server 本地守护文件与进程自动发现器。
+ * @fileoverview Antigravity Hub / Language Server 
  *
- * 兼容 Antigravity 2.0、Antigravity IDE、无头 `agy` CLI 与 `agy remote-control serve`：
- * 1. 优先读取 `~/.gemini/<product>/daemon/hub_*.json`（跨平台零外部命令依赖，毫秒级命中 `httpPort` + `csrfToken`）；
- * 2. 回退枚举当前用户的 `agy` / `antigravity-cli` / `language_server` 进程；
- * 3. 在精简版无头 Linux 环境优先通过 `/proc/<pid>/fd` + `/proc/net/tcp{,6}` 与 `ss -H -lntp` 解析监听端口，不强依赖 `lsof`；
- * 4. 经 `GetUserStatus` 实测握手验证后写入 `lsRuntimeEndpoint`。
+ * Antigravity 2.0 Antigravity IDE `agy` CLI `agy remote-control serve` 
+ * 1. `~/.gemini/<product>/daemon/hub_*.json` `httpPort` + `csrfToken` 
+ * 2. `agy` / `antigravity-cli` / `language_server` 
+ * 3. Linux `/proc/<pid>/fd` + `/proc/net/tcp{,6}` `ss -H -lntp` `lsof` 
+ * 4. `GetUserStatus` `lsRuntimeEndpoint` 
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -32,7 +32,7 @@ function defaultIsLsPidAlive(pid) {
 }
 
 /**
- * 从 `agy`（`--hub` / `remote-control` / CLI）或 `language_server` 命令行字符串中提取端口号与 CSRF 令牌。
+ * `agy` `--hub` / `remote-control` / CLI `language_server` CSRF 
  *
  * @param {string} commandLine
  * @returns {{ hubPort: number|null, csrfToken: string, isHub: boolean, isLanguageServer: boolean }}
@@ -72,7 +72,7 @@ export function parseLsArgsFromCommandLine(commandLine) {
 }
 
 /**
- * 解析 Linux `/proc/net/tcp` 或 `/proc/net/tcp6` 内容，提取指定 socket inode 集合中处于 `0A` (LISTEN) 状态的本地端口。
+ * Linux `/proc/net/tcp` `/proc/net/tcp6` socket inode `0A` (LISTEN) 
  *
  * @param {string} tcpTableText
  * @param {Set<string>} socketInodes
@@ -103,7 +103,7 @@ export function parseLinuxProcNetTcpPorts(tcpTableText, socketInodes) {
 }
 
 /**
- * 解析 Linux `ss -H -lntp` 输出，提取归属于目标 `pid` 的监听端口。
+ * Linux `ss -H -lntp` `pid` 
  *
  * @param {string} ssOutput
  * @param {number} pid
@@ -145,7 +145,7 @@ async function readLinuxProcListeningPorts(pid, customProcFs = null) {
         const m = target.match(/^socket:\[(\d+)\]$/);
         if (m) socketInodes.add(m[1]);
       } catch {
-        // 忽略瞬态关闭的 fd
+        
       }
     }
     if (socketInodes.size === 0) return [];
@@ -159,7 +159,7 @@ async function readLinuxProcListeningPorts(pid, customProcFs = null) {
           ports.add(p);
         }
       } catch {
-        // 忽略不可读的 proc 网络表
+        // proc
       }
     }
     return Array.from(ports);
@@ -216,7 +216,7 @@ function readHubDaemonCandidates(daemonDirs, preferredPids, isPidAliveFn) {
           targets,
         });
       } catch {
-        // 忽略损坏或正在替换的 daemon 文件
+        // daemon
       }
     }
   }
@@ -265,11 +265,11 @@ function readLinuxProcCandidates() {
           const parts = afterComm.split(/\s+/);
           ppid = Number(parts[1]) || 0;
         } catch {
-          // 忽略单进程 stat 读取失败
+          // stat
         }
         results.push({ pid, ppid, commandLine });
       } catch {
-        // 忽略退出中的瞬态进程
+        
       }
     }
   } catch {
@@ -358,7 +358,7 @@ async function findListeningPortsForPid(pid, platform, execCmdFn, procFs = null)
       const ssPorts = parseSsListeningPorts(ssOut, pid);
       if (ssPorts.length > 0) return ssPorts;
     } catch {
-      // 无 ss 或权限受限时继续回退至 lsof
+      // ss lsof
     }
   }
 
@@ -399,24 +399,24 @@ async function probeLsCandidate(port, csrfToken, fetchFn, protos = ['http', 'htt
         return { addr: proto === 'https' ? `https://${addr}` : addr, baseUrl, csrfToken };
       }
     } catch {
-      // 继续尝试下一候选协议或端口
+      
     }
   }
   return null;
 }
 
 /**
- * 自动探测并握手验证本机正在运行的 Antigravity Hub / Language Server RPC 端点。
+ * Antigravity Hub / Language Server RPC 
  *
  * @param {{
- *   ppid?: number,
- *   ancestorPids?: number[],
- *   platform?: string,
- *   daemonDirs?: string[],
- *   isPidAliveFn?: (pid: number) => boolean,
- *   procFs?: object|null,
- *   execCmdFn?: (file: string, args: string[]) => Promise<string>,
- *   fetchFn?: typeof fetch
+ * ppid?: number,
+ * ancestorPids?: number[],
+ * platform?: string,
+ * daemonDirs?: string[],
+ * isPidAliveFn?: (pid: number) => boolean,
+ * procFs?: object|null,
+ * execCmdFn?: (file: string, args: string[]) => Promise<string>,
+ * fetchFn?: typeof fetch
  * }} [options]
  * @returns {Promise<{ addr: string, baseUrl: string, csrfToken: string, pid: number } | null>}
  */
@@ -440,7 +440,7 @@ export async function discoverAntigravityLsEndpoint(options = {}) {
       .filter((n) => Number.isInteger(n) && n > 0)
   );
 
-  // 1. 优先探测 ~/.gemini/<product>/daemon/hub_*.json 守护端点描述文件（零外部进程开销）
+  // 1. ~/.gemini/<product>/daemon/hub_*.json
   const daemonCandidates = readHubDaemonCandidates(daemonDirs, preferredPids, isPidAliveFn);
   const probedDaemonKeys = new Set();
   for (const cand of daemonCandidates) {
@@ -453,7 +453,7 @@ export async function discoverAntigravityLsEndpoint(options = {}) {
     }
   }
 
-  // 2. 回退枚举操作系统进程并解析监听端口
+  
   let rawProcs = [];
   try {
     rawProcs = await listCandidateOsProcesses(platform, execCmdFn);
@@ -500,7 +500,7 @@ export async function discoverAntigravityLsEndpoint(options = {}) {
 }
 
 /**
- * 确保 `lsRuntimeEndpoint` 已就绪（具备并发去重、失败冷却与动态端点重连能力）。
+ * `lsRuntimeEndpoint` 
  *
  * @param {{ force?: boolean, respectCooldown?: boolean, ancestorPids?: number[] }} [options]
  * @returns {Promise<boolean>}
@@ -513,7 +513,7 @@ export async function ensureLsEndpointDiscovered({
   if (lsRuntimeEndpoint.addr === 'test.invalid') {
     return false;
   }
-  if (!force && lsRuntimeEndpoint.baseUrl && (lsRuntimeEndpoint.csrfToken || !lsRuntimeEndpoint.isDynamic)) {
+  if (!force && lsRuntimeEndpoint.baseUrl && lsRuntimeEndpoint.csrfToken) {
     return true;
   }
   if (lsDiscoveryState.inFlight) {

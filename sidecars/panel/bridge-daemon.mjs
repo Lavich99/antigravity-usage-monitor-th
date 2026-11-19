@@ -1,28 +1,33 @@
 /**
- * @fileoverview Antigravity IDE / 2.0 / CLI 独立后台守护进程 (`bridge-daemon.mjs`)。
+ * @fileoverview Antigravity IDE / 2.0 / CLI (`bridge-daemon.mjs`) 
  *
- * 由 `mcp-entry.mjs` 托管拉起（亦支持命令行 `--standalone` 直接启动），负责：
- * 1. 动态探测本机运行中的 `agy` (`daemon/hub_*.json` / `--hub` / `remote-control`) 或 `language_server` 端点；
- * 2. 在桌面端 / IDE 环境启动本地回环桥接服务并通过 CDP 挂载监控胶囊；
- * 3. 当配置了 `USAGE_MONITOR_STANDALONE_PORT` 或 `settings.json` 中的 `standalonePort`（`1024..65535`）时，
- *    自动在后台托管独立 Web 监控端口，无需手工另开进程；
- * 4. 收到父进程 `SHUTDOWN_DISPOSE` 指令或终止信号时，主动清理窗口浮层与独立端口并平滑退出。
+ * `mcp-entry.mjs` `--standalone` 
+ * 1. `agy` (`daemon/hub_*.json` / `--hub` / `remote-control`) `language_server` 
+ * 2. / IDE CDP 
+ * 3. `USAGE_MONITOR_STANDALONE_PORT` `settings.json` `standalonePort` `1024..65535` 
+ * Web 
+ * 4. `SHUTDOWN_DISPOSE` 
  */
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  bootBundleVersion,
+  bootWindowBridgeRuntime,
+  setStandalonePortListener,
+} from './backend/api-actions.mjs';
+import {
+  computeRuntimeCodeVersion,
+  loadSettings,
+  normalizeStandalonePort,
+} from './backend/config.mjs';
+import {
+  createStandaloneWebServer,
+  parseStandaloneCliArgs,
+} from './backend/standalone-server.mjs';
+import { runStandaloneCli } from './standalone.mjs';
 
-export async function startBridgeDaemon() {
-  const [
-    { bootBundleVersion, bootWindowBridgeRuntime, setStandalonePortListener },
-    { computeRuntimeCodeVersion, loadSettings, normalizeStandalonePort },
-    { createStandaloneWebServer, parseStandaloneCliArgs },
-  ] = await Promise.all([
-    import('./backend/api-actions.mjs'),
-    import('./backend/config.mjs'),
-    import('./backend/standalone-server.mjs'),
-  ]);
-
+export function startBridgeDaemon() {
   let shuttingDown = false;
   let sawShutdownDispose = false;
   let stdinBuf = '';
@@ -50,7 +55,7 @@ export async function startBridgeDaemon() {
         triggerRestart();
       }
     } catch {
-      // 忽略文件覆盖期间瞬态 stat 异常
+      // stat
     }
   }, 3000);
   driftWatchTimer.unref?.();
@@ -127,7 +132,7 @@ export async function startBridgeDaemon() {
         standaloneController?.stop?.(),
       ]);
     } catch {
-      // 忽略退出清理异常
+      
     } finally {
       clearTimeout(forceTimer);
       process.exit(exitCode);
@@ -166,8 +171,8 @@ const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';
 if (invokedPath && invokedPath === fileURLToPath(import.meta.url)) {
   const cliArgs = process.argv.slice(2);
   if (cliArgs.includes('--standalone') || cliArgs.includes('--help') || cliArgs.includes('-h')) {
-    void import('./standalone.mjs').then(({ runStandaloneCli }) => runStandaloneCli(cliArgs));
+    void runStandaloneCli(cliArgs);
   } else {
-    void startBridgeDaemon();
+    startBridgeDaemon();
   }
 }

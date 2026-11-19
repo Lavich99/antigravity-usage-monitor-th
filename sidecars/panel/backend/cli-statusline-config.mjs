@@ -1,33 +1,31 @@
 /**
- * @fileoverview Antigravity CLI (`agy`) 底部状态栏胶囊 (`statusLine`) 配置管理与终端 ANSI 渲染器。
+ * @fileoverview Antigravity CLI (`agy`) (`statusLine`) ANSI 
  *
- * 负责两部分纯逻辑与安全落盘职责：
- * 1. 无损维护 `~/.gemini/antigravity-cli/settings.json` 中的 `statusLine` 配置：
- *    - 仅当 `~/.gemini/antigravity-cli` 目录已存在时生效；
- *    - 若用户已自行配置第三方 `statusLine.command`（非本插件 `cli-statusline.mjs`），严格原样保留绝不覆盖；
- *    - 开启时默认以 `stack_with_default: false` 单行内联接管底栏（左侧保留 `? for shortcuts`，中间渲染无底色监控指标，右侧保留 `auto · Model · effort`）；关闭时干净移除本插件托管项；
- * 2. 将 13 项胶囊槽位（`TOPBAR_SLOT_KEYS`）与多会话状态渲染为兼容 Windows `cmd.exe` (CP936) /
- *    PowerShell / Windows Terminal / macOS / Linux 的单行无底色 24-bit ANSI 状态条（仅使用标准前景 CSI SGR，
- *    避免深色背景色块突兀及 OSC 序列干扰 Bubble Tea 宽度计算）。
+ * 
+ * 1. `~/.gemini/antigravity-cli/settings.json` `statusLine` 
+ * - `~/.gemini/antigravity-cli` 
+ * - `statusLine.command` `cli-statusline.mjs` 
+ * - `stack_with_default: false` `? for shortcuts` `auto · Model · effort` 
+ * 2. 13 `TOPBAR_SLOT_KEYS` Windows `cmd.exe` (CP936) /
+ * PowerShell / Windows Terminal / macOS / Linux 24-bit ANSI CSI SGR 
+ * OSC Bubble Tea 
  */
 
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { HERE, lsRuntimeEndpoint, normalizeLanguageSetting, normalizeTopbarCapsuleSlots } from './config.mjs';
 import {
-  classifyCacheTier,
-  classifySpeedTier,
-  classifyStepCostTier,
-  classifyTtftTier,
-  formatCompactCapsuleCost,
-  formatCompactCapsuleTtft,
-  formatCompactTokens,
-  resolveCapsuleQuotaSlotPct,
-} from '../shared/telemetry-display-rules.mjs';
+  HERE,
+  lsRuntimeEndpoint,
+  normalizeLanguageSetting,
+  normalizeQuotaDisplayMode,
+  normalizeTopbarCapsuleSlots,
+} from './config.mjs';
 
-// 24-bit ANSI 前景 SGR 调色板（透明底色，与桌面端四档语义色阶及 CLI 原生底栏色调对齐，无任何背景填充或非 SGR 控制符）
+const CLI_STATUS_THIRD_PARTY_FAMILY_RE = /claude|gpt|anthropic|openai|3p|sonnet|opus|haiku/i;
+
+// 24-bit ANSI SGR CLI SGR
 const SGR_RESET = '\x1b[0m';
 const SGR_BOLD = '\x1b[1m';
 const SGR_FG_BRIGHT = '\x1b[38;2;226;232;240m';
@@ -50,7 +48,7 @@ function isCliStatusPlainObject(v) {
 }
 
 /**
- * 解析 `~/.gemini/antigravity-cli/settings.json` 路径（支持 `ANTIGRAVITY_GEMINI_DIR` 覆盖）。
+ * `~/.gemini/antigravity-cli/settings.json` `ANTIGRAVITY_GEMINI_DIR` 
  *
  * @param {Record<string, string|undefined>} [env=process.env]
  * @param {string} [homeDir=homedir()]
@@ -62,7 +60,7 @@ export function resolveCliSettingsPath(env = process.env, homeDir = homedir()) {
 }
 
 /**
- * 优先解析本机已安装插件目录下的 `cli-statusline.mjs`，不存在时回退至当前运行目录 `HERE`。
+ * `cli-statusline.mjs` `HERE` 
  *
  * @param {{ env?: Record<string, string|undefined>, homeDir?: string, fallbackHere?: string }} [options]
  * @returns {string}
@@ -89,7 +87,7 @@ export function resolvePreferredCliStatusLineScriptPath({
 }
 
 /**
- * 检测当前环境变量 `PATH` 中是否可直接定位 `node` 可执行文件。
+ * `PATH` `node` 
  *
  * @param {Record<string, string|undefined>} [env=process.env]
  * @param {string} [platform=process.platform]
@@ -107,7 +105,7 @@ export function detectNodeOnSystemPath(env = process.env, platform = process.pla
       try {
         if (existsSync(join(cleanDir, bin))) return true;
       } catch {
-        // 忽略无权限目录
+        
       }
     }
   }
@@ -131,13 +129,13 @@ function toPercentEncodedFileUrl(winOrPosixPath) {
 }
 
 /**
- * 构造跨平台安全的 `statusLine.command` 字符串：
- * - Windows 下 `agy.exe` 通过 Go `exec.Command("cmd", "/c", command)` 执行：Go 的 `syscall.EscapeArg`
- *   会把 `command` 内的任何双引号 `"` 转义成 `\"`，而 `cmd.exe` 不消费 `\"` 会将其原样传给 `node.exe`，
- *   导致 `argv[1]` 混入字面量双引号而找不到模块。因此 Windows 下严格避免在 `command` 中出现双引号 `"`：
- *   - 路径无空格时直接生成 `node C:/.../cli-statusline.mjs`；
- *   - 路径含空格时生成零双引号、零空格参数的 `node --input-type=module -e import('file:///C:/...%20.../cli-statusline.mjs#autorun')`；
- * - macOS / Linux 下由 `sh -c` 解析，正常使用标准引号包裹。
+ * `statusLine.command` 
+ * - Windows `agy.exe` Go `exec.Command("cmd", "/c", command)` Go `syscall.EscapeArg`
+ * `command` `"` `\"` `cmd.exe` `\"` `node.exe` 
+ * `argv[1]` Windows `command` `"` 
+ * - `node C:/.../cli-statusline.mjs` 
+ * - `node --input-type=module -e import('file:///C:/...%20.../cli-statusline.mjs#autorun')` 
+ * - macOS / Linux `sh -c` 
  *
  * @param {string} scriptPath
  * @param {{ platform?: string, execPath?: string, nodeOnPath?: boolean }} [options]
@@ -170,7 +168,7 @@ export function buildCliStatusLineCommand(
 }
 
 /**
- * 判断一条 `statusLine.command` 是否由本插件托管（指向 `cli-statusline.mjs`）。
+ * `statusLine.command` `cli-statusline.mjs` 
  *
  * @param {unknown} cmd
  * @returns {boolean}
@@ -183,7 +181,7 @@ export function isManagedCliStatusLineCommand(cmd) {
 }
 
 /**
- * 在纯对象层面更新或移除本插件托管的 `statusLine` 配置，绝不覆盖用户自定义的第三方脚本。
+ * `statusLine` 
  *
  * @param {unknown} rawObj
  * @param {{ enabled?: boolean, command?: string, stackWithDefault?: boolean }} [options]
@@ -281,7 +279,7 @@ export function applyCliStatusLineToSettingsObject(
 }
 
 /**
- * 同步本插件在 `~/.gemini/antigravity-cli/settings.json` 中的托管 `statusLine` 配置。
+ * `~/.gemini/antigravity-cli/settings.json` `statusLine` 
  *
  * @param {{
  *   enabled?: boolean,
@@ -368,7 +366,7 @@ export function ensureCliStatusLineConfigured({
       try {
         if (existsSync(tmpPath)) unlinkSync(tmpPath);
       } catch {
-        // 忽略临时文件清理异常
+ // 
       }
       writeFileSync(settingsPath, serialized, 'utf8');
     }
@@ -392,49 +390,172 @@ export function ensureCliStatusLineConfigured({
 }
 
 // ---------------------------------------------------------------------------
-// 胶囊槽位纯格式化与终端 ANSI 渲染（与前端 `metricRegistry.js` 语义阈值 1:1 对齐）
+// ANSI `metricRegistry.js` 1:1 
 // ---------------------------------------------------------------------------
 
 function cliStatusSpeedSgr(tokPerSec) {
-  const tier = classifySpeedTier(tokPerSec);
-  if (tier === 'good') return SGR_FG_GOOD;
-  if (tier === 'info') return SGR_FG_INFO;
-  if (tier === 'warn') return SGR_FG_WARN;
-  if (tier === 'danger') return SGR_FG_DANGER;
-  return SGR_FG_MUTED;
+  if (tokPerSec == null || !Number.isFinite(Number(tokPerSec)) || Number(tokPerSec) <= 0) {
+    return SGR_FG_MUTED;
+  }
+  const v = Number(tokPerSec);
+  if (v >= 60) return SGR_FG_GOOD;
+  if (v >= 35) return SGR_FG_INFO;
+  if (v >= 20) return SGR_FG_WARN;
+  return SGR_FG_DANGER;
 }
 
 function cliStatusCacheSgr(cacheHitPct, promptTokens = null) {
-  const tier = classifyCacheTier(cacheHitPct, promptTokens);
-  if (tier === 'good') return SGR_FG_GOOD;
-  if (tier === 'info') return SGR_FG_INFO;
-  if (tier === 'warn') return SGR_FG_WARN;
-  if (tier === 'danger') return SGR_FG_DANGER;
-  return SGR_FG_MUTED;
+  if (cacheHitPct == null || !Number.isFinite(Number(cacheHitPct))) return SGR_FG_MUTED;
+  const v = Number(cacheHitPct);
+  if (promptTokens != null && Number(promptTokens) <= 0 && v <= 0) return SGR_FG_MUTED;
+  if (v >= 85) return SGR_FG_GOOD;
+  if (v >= 65) return SGR_FG_INFO;
+  if (v >= 30) return SGR_FG_WARN;
+  return SGR_FG_DANGER;
 }
 
 function cliStatusCostSgr(costUsd) {
-  const tier = classifyStepCostTier(costUsd);
-  if (tier === 'danger') return SGR_FG_DANGER;
-  if (tier === 'warn') return SGR_FG_WARN;
+  if (costUsd == null || !Number.isFinite(Number(costUsd))) return SGR_FG_NORMAL;
+  const v = Number(costUsd);
+  if (v >= 0.3) return SGR_FG_DANGER;
+  if (v >= 0.15) return SGR_FG_WARN;
   return SGR_FG_NORMAL;
 }
 
 function cliStatusTtftSgr(ttftSec) {
-  const tier = classifyTtftTier(ttftSec);
-  if (tier === 'muted') return SGR_FG_MUTED;
-  if (tier === 'danger') return SGR_FG_DANGER;
-  if (tier === 'warn') return SGR_FG_WARN;
+  if (ttftSec == null || !Number.isFinite(Number(ttftSec)) || Number(ttftSec) < 0) {
+    return SGR_FG_MUTED;
+  }
+  const v = Number(ttftSec);
+  if (v >= 30) return SGR_FG_DANGER;
+  if (v >= 18) return SGR_FG_WARN;
   return SGR_FG_NORMAL;
 }
 
-const cliFormatCompactCost = formatCompactCapsuleCost;
-const cliFormatCompactTtft = formatCompactCapsuleTtft;
-const cliFormatTokens = formatCompactTokens;
-const cliResolveQuotaPct = resolveCapsuleQuotaSlotPct;
+function cliFormatCompactCost(costUsd) {
+  if (costUsd == null || !Number.isFinite(Number(costUsd))) return '--';
+  const val = Math.max(0, Number(costUsd));
+  if (val === 0) return '$0.00';
+  if (val < 0.001) return '<$0.001';
+  if (val < 1) return `$${val.toFixed(3)}`;
+  if (val < 100) return `$${val.toFixed(2)}`;
+  return `$${Math.round(val)}`;
+}
+
+function cliFormatCompactTtft(ttftSec) {
+  if (ttftSec == null || !Number.isFinite(Number(ttftSec)) || Number(ttftSec) < 0) return '--s';
+  const val = Number(ttftSec);
+  if (val < 1) return `${val.toFixed(2)}s`;
+  if (val < 100) return `${val.toFixed(1)}s`;
+  return `${Math.round(val)}s`;
+}
+
+function cliFormatTokens(num) {
+  const n = Number(num || 0);
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(Math.round(n));
+}
+
+function cliResolveQuotaPct(quotas, slotKey) {
+  if (!quotas || typeof quotas !== 'object') return null;
+  const pools = Array.isArray(quotas.pools) ? quotas.pools : [];
+  const activePool = quotas.activePool || null;
+  const weekly = quotas.weekly || null;
+
+  if (slotKey === 'quota_auto') {
+    const candidates = [];
+    if (activePool && Number.isFinite(Number(activePool.remainingPct))) {
+      candidates.push(Number(activePool.remainingPct));
+    }
+    if (activePool && Number.isFinite(Number(activePool.weeklyRemainingPct))) {
+      candidates.push(Number(activePool.weeklyRemainingPct));
+    }
+    if (!candidates.length && weekly && Number.isFinite(Number(weekly.remainingPct))) {
+      candidates.push(Number(weekly.remainingPct));
+    }
+    if (!candidates.length && pools.length > 0) {
+      for (const p of pools) {
+        if (p && Number.isFinite(Number(p.remainingPct))) candidates.push(Number(p.remainingPct));
+        if (p && Number.isFinite(Number(p.weeklyRemainingPct))) {
+          candidates.push(Number(p.weeklyRemainingPct));
+        }
+      }
+    }
+    if (!candidates.length) return null;
+    return Math.max(0, Math.min(100, Math.round(Math.min(...candidates))));
+  }
+
+  const isClaude = slotKey.startsWith('claude_');
+  const isWeekly = slotKey.endsWith('_weekly');
+  let rawPct = null;
+
+  if (isClaude) {
+    const claudePool =
+      pools.find((p) => p?.poolKey === 'Claude & GPT') ||
+      pools.find((p) =>
+        CLI_STATUS_THIRD_PARTY_FAMILY_RE.test(String(p?.poolKey || p?.poolLabel || ''))
+      );
+    const cand = isWeekly ? claudePool?.weeklyRemainingPct : claudePool?.remainingPct;
+    if (cand != null && Number.isFinite(Number(cand))) {
+      rawPct = Number(cand);
+    } else if (
+      activePool &&
+      CLI_STATUS_THIRD_PARTY_FAMILY_RE.test(String(activePool.family || activePool.poolLabel || ''))
+    ) {
+      const fb = isWeekly ? activePool.weeklyRemainingPct : activePool.remainingPct;
+      if (fb != null && Number.isFinite(Number(fb))) rawPct = Number(fb);
+    }
+  } else {
+    const stdGemini =
+      pools.find((p) => p?.poolKey === 'Gemini') ||
+      pools.find(
+        (p) =>
+          /gemini/i.test(String(p?.poolKey || p?.poolLabel || '')) &&
+          !/carbon|argon/i.test(String(p?.poolKey || ''))
+      );
+    const geminiFamilyPools = pools.filter((p) =>
+      /gemini|carbon|argon/i.test(String(p?.poolKey || p?.poolLabel || ''))
+    );
+    const primaryCand = isWeekly ? stdGemini?.weeklyRemainingPct : stdGemini?.remainingPct;
+    if (primaryCand != null && Number.isFinite(Number(primaryCand))) {
+      rawPct = Number(primaryCand);
+    } else {
+      const familyVals = geminiFamilyPools
+        .map((p) => (isWeekly ? p?.weeklyRemainingPct : p?.remainingPct))
+        .filter((v) => v != null && Number.isFinite(Number(v)))
+        .map(Number);
+      if (familyVals.length > 0) {
+        rawPct = Math.min(...familyVals);
+      } else if (
+        activePool &&
+        !CLI_STATUS_THIRD_PARTY_FAMILY_RE.test(
+          String(activePool.family || activePool.poolLabel || '')
+        )
+      ) {
+        const fb = isWeekly ? activePool.weeklyRemainingPct : activePool.remainingPct;
+        if (fb != null && Number.isFinite(Number(fb))) rawPct = Number(fb);
+      }
+      if (
+        rawPct == null &&
+        isWeekly &&
+        weekly &&
+        !CLI_STATUS_THIRD_PARTY_FAMILY_RE.test(String(weekly.poolFamily || '')) &&
+        weekly.remainingPct != null &&
+        Number.isFinite(Number(weekly.remainingPct))
+      ) {
+        rawPct = Number(weekly.remainingPct);
+      }
+    }
+  }
+
+  if (rawPct == null || !Number.isFinite(rawPct)) return null;
+  return Math.max(0, Math.min(100, Math.round(rawPct)));
+}
 
 /**
- * 计算终端可见列宽（剥离 CSI SGR 转义序列，CJK 全角字符按 2 列、`●`/`◎`/`·` 与 ASCII 按 1 列计算）。
+ * CSI SGR CJK 2 `●`/`◎`/`·` ASCII 1 
  *
  * @param {string} rawStr
  * @returns {number}
@@ -466,8 +587,8 @@ export function cliDisplayWidth(rawStr) {
 }
 
 /**
- * 拆分 CLI 模型显示名与推理档位（例如将 `"Gemini 4 Hydrogen (Medium)"` 拆为 `"Gemini 4 Hydrogen"` + `"medium"`，
- * 与 `agy` 原生 `stripEffortSuffix` 显示效果一致）。
+ * CLI `"Gemini 4 Hydrogen (Medium)"` `"Gemini 4 Hydrogen"` + `"medium"` 
+ * `agy` `stripEffortSuffix` 
  *
  * @param {unknown} rawModelName
  * @param {unknown} [rawEffort]
@@ -578,9 +699,9 @@ function cliComposeBalancedThreeColumn(leftStr, centerStr, rightStr, maxWidth) {
 }
 
 /**
- * 将单槽位指标格式化为纯文本与无背景前景语义 SGR 片段。
+ * SGR 
  */
-function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, useColor = true, slotSet } = {}) {
+function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, isTh = false, useColor = true, slotSet, quotaDisplayMode = 'left' } = {}) {
   const hasTelemetry = slotCtx.hasTelemetry !== false;
 
   if (metricKey === 'context') {
@@ -615,12 +736,10 @@ function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, useColor = true
     const textVal = valid
       ? `${numVal >= 100 ? Math.round(numVal) : numVal.toFixed(1)} t/s`
       : slotCtx.isRunning
-        ? isEn
-          ? 'Gen...'
-          : '生成中...'
-        : isEn
-          ? 'Idle'
-          : '空闲';
+        ? isTh
+          ? 'กำลังรัน...'
+          : 'Gen...'
+        : 'Idle';
     if (!useColor) return textVal;
     const color = valid
       ? `${SGR_BOLD}${cliStatusSpeedSgr(numVal)}`
@@ -635,7 +754,7 @@ function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, useColor = true
       hasTelemetry && Number.isFinite(Number(slotCtx.avgTps)) && Number(slotCtx.avgTps) > 0;
     const numVal = valid ? Number(slotCtx.avgTps) : 0;
     const needPrefix = slotSet?.has('tps');
-    const prefix = needPrefix ? (isEn ? 'avg ' : '均 ') : '';
+    const prefix = needPrefix ? (isTh ? 'เฉลี่ย ' : 'avg ') : '';
     const textVal = valid
       ? `${prefix}${numVal >= 100 ? Math.round(numVal) : numVal.toFixed(1)} t/s`
       : `${prefix}-- t/s`;
@@ -660,7 +779,11 @@ function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, useColor = true
         ? slotCtx.sessionCost
         : slotCtx.stepCost;
     const needPrefix =
-      metricKey === 'session_cost' && slotSet?.has('cost') ? (isEn ? 'sum ' : '总 ') : '';
+      metricKey === 'session_cost' && slotSet?.has('cost')
+        ? isTh
+          ? 'รวม '
+          : 'sum '
+        : '';
     const textVal = `${needPrefix}${hasTelemetry ? cliFormatCompactCost(rawVal) : '--'}`;
     if (!useColor) return textVal;
     const color =
@@ -676,7 +799,7 @@ function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, useColor = true
     const valid =
       hasTelemetry && slotCtx.cacheHitPct != null && Number.isFinite(Number(slotCtx.cacheHitPct));
     const numVal = valid ? Math.max(0, Math.min(100, Math.round(Number(slotCtx.cacheHitPct)))) : 0;
-    const prefix = isEn ? 'cache ' : '缓 ';
+    const prefix = isTh ? 'Cache ' : 'cache ';
     const textVal = valid ? `${prefix}${numVal}%` : `${prefix}--%`;
     if (!useColor) return textVal;
     const color = valid
@@ -697,14 +820,20 @@ function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, useColor = true
   }
 
   const quotaPct = hasTelemetry ? cliResolveQuotaPct(slotCtx.quotas, metricKey) : null;
+  const shownPct =
+    quotaPct != null ? (quotaDisplayMode === 'used' ? 100 - quotaPct : quotaPct) : null;
   const textVal =
-    quotaPct != null
-      ? isEn
-        ? `${quotaPct}% left`
-        : `余 ${quotaPct}%`
-      : isEn
-        ? 'Quota --'
-        : '余 --%';
+    shownPct != null
+      ? quotaDisplayMode === 'used'
+        ? isTh
+          ? `ใช้ ${shownPct}%`
+          : `${shownPct}% used`
+        : isTh
+          ? `เหลือ ${shownPct}%`
+          : `${shownPct}% left`
+      : isTh
+        ? 'โควต้า --'
+        : 'Quota --';
   if (!useColor) return textVal;
   const isDanger = quotaPct != null && quotaPct <= 15;
   const isWarn = !isDanger && quotaPct != null && quotaPct <= 30;
@@ -717,7 +846,7 @@ function cliRenderSingleSlot(metricKey, slotCtx, { isEn = false, useColor = true
 }
 
 /**
- * 渲染单行无背景 CLI 底部状态条（传入 `terminalWidth > 0` 时自动合成「左快捷键提示 + 居中指标 + 右模式与模型」三栏单行布局）。
+ * CLI `terminalWidth > 0` + + 
  *
  * @param {{
  *   hasTelemetry?: boolean,
@@ -753,6 +882,8 @@ export function formatCliStatusLineCapsule(slotCtx = {}, options = {}) {
   const slots = normalizeTopbarCapsuleSlots(options.slots);
   const showMulti = options.showMultiSession !== false;
   const normLang = normalizeLanguageSetting(options.language);
+  const quotaDisplayMode = normalizeQuotaDisplayMode(options.quotaDisplayMode);
+  const isTh = normLang === 'th-TH';
   const isEn = normLang === 'en-US';
   const useColor = options.color !== false;
   const slotSet = new Set(slots);
@@ -766,15 +897,15 @@ export function formatCliStatusLineCapsule(slotCtx = {}, options = {}) {
     const labelText =
       runningCount > 0
         ? runningSubCount > 0
-          ? isEn
-            ? `${runningCount} active · ${runningSubCount} sub`
-            : `${runningCount} 运行中 · ${runningSubCount} 子`
-          : isEn
-            ? `${runningCount} active`
-            : `${runningCount} 运行中`
-        : isEn
-          ? '0 active'
-          : '0 运行中';
+          ? isTh
+            ? `${runningCount} Active · ${runningSubCount} Sub`
+            : `${runningCount} active · ${runningSubCount} sub`
+          : isTh
+            ? `${runningCount} Active`
+            : `${runningCount} active`
+        : isTh
+          ? '0 Active'
+          : '0 active';
     if (!useColor) {
       multiCore = `● ${labelText}`;
     } else {
@@ -790,7 +921,7 @@ export function formatCliStatusLineCapsule(slotCtx = {}, options = {}) {
   }
 
   const renderedSlots = slots.map((key) =>
-    cliRenderSingleSlot(key, slotCtx, { isEn, useColor, slotSet })
+    cliRenderSingleSlot(key, slotCtx, { isEn, isTh, useColor, slotSet, quotaDisplayMode })
   );
   const sep = useColor ? `${SGR_FG_SEP} | ${SGR_RESET}` : ' | ';
   const slotsBody = renderedSlots.join(sep);
@@ -801,7 +932,7 @@ export function formatCliStatusLineCapsule(slotCtx = {}, options = {}) {
     return fullCapsule;
   }
 
-  // 预留右侧 1 列安全边距，与 `agy` 原生底栏右边缘对齐并避免 Windows `conhost`/`cmd.exe` 末列自动折行
+ // 1 `agy` Windows `conhost`/`cmd.exe` 
   const maxWidth = Math.max(1, Math.floor(rawWidth) - 1);
   const compactCapsule = multiCore ? `${multiCore}  ${slotsBody}` : slotsBody;
   const fullLeft = cliBuildLeftSegment({ vimMode: options.vimMode, short: false, useColor });

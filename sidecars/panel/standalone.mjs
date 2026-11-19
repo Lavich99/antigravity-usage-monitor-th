@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Antigravity Usage Monitor 独立 Web 监控 CLI 入口 (`standalone.mjs`)。
+ * @fileoverview Antigravity Usage Monitor Web CLI (`standalone.mjs`) 
  *
- * 在无头服务器 (`agy` / `agy remote-control serve`) 或纯终端环境下，脱离 `sidecar_sdk`
- * 直接拉起完整的四分页监控面板与 API 服务：
- * - `node sidecars/panel/standalone.mjs --port 8787`（配合 `ssh -L 8787:127.0.0.1:8787` 零鉴权安全访问）
- * - `node sidecars/panel/standalone.mjs --host 0.0.0.0 --port 8787 --token <secret>`（带访问令牌保护）
+ * (`agy` / `agy remote-control serve`) `sidecar_sdk`
+ * API 
+ * - `node sidecars/panel/standalone.mjs --port 8787` `ssh -L 8787:127.0.0.1:8787` 
+ * - `node sidecars/panel/standalone.mjs --host 0.0.0.0 --port 8787 --token <secret>` 
  */
 
 import { resolve } from 'node:path';

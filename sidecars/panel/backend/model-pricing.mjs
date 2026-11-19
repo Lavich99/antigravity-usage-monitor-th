@@ -1,24 +1,23 @@
 /**
- * @fileoverview 模型身份识别、展示名称规范化与单步 API 等效成本计算。
+ * @fileoverview API 
  *
- * 核心原则：
- * 1. 优先融合服务端下发的动态模型目录 (`dynamicModelMap`)、静态占位符表 (`PLACEHOLDER_MAP`)
- *    与真实响应模型 (`responseModel`)，并优先匹配含档位后缀的精确价格条目；
- * 2. 价格未知或模型身份无法确认时，严格返回 `pricing: null` 与 `costUsd: null`，
- *    绝不借用其他模型单价伪造费用。
+ * 
+ * 1. (`dynamicModelMap`) (`PLACEHOLDER_MAP`)
+ * (`responseModel`) 
+ * 2. `pricing: null` `costUsd: null` 
+ * 
  */
 
-import { parseIsoMs } from '../trajectory-metrics.mjs';
 import { MODEL_PRICING, PLACEHOLDER_MAP } from './pricing-catalog.mjs';
 
 /**
- * 根据 API 提供商枚举或模型标识符推断所属模型家族（`'Gemini'` | `'Claude'` | `'GPT'` | `'Other'`）。
- * 注意：先匹配更具体的 `ANTHROPIC`/`CLAUDE` 与 `OPENAI`/`GPT`（含 `o1`/`o3`/`o4` 系列），
- * 防止 `API_PROVIDER_GOOGLE_VERTEX_ANTHROPIC` 被宽泛的 `GOOGLE` 子串抢先误判为 `'Gemini'`。
+ * API `'Gemini'` | `'Claude'` | `'GPT'` | `'Other'` 
+ * `ANTHROPIC`/`CLAUDE` `OPENAI`/`GPT` `o1`/`o3`/`o4` 
+ * `API_PROVIDER_GOOGLE_VERTEX_ANTHROPIC` `GOOGLE` `'Gemini'` 
  *
- * @param {string} [rawModelKey=''] 原始模型键名或占位符
- * @param {string} [modelId=''] 规范化模型 ID
- * @param {string} [apiProvider=''] 上游 API 提供商枚举字符串
+ * @param {string} [rawModelKey=''] 
+ * @param {string} [modelId=''] ID
+ * @param {string} [apiProvider=''] API 
  * @returns {'Gemini'|'Claude'|'GPT'|'Other'}
  */
 function inferFamilyFromProviderOrKey(rawModelKey = '', modelId = '', apiProvider = '') {
@@ -50,6 +49,7 @@ function inferFamilyFromProviderOrKey(rawModelKey = '', modelId = '', apiProvide
     combined.includes('CARBON') ||
     combined.includes('ARGON') ||
     combined.includes('HYDROGEN') ||
+    combined.includes('NEON') ||
     combined.includes('ORCHESTRATOR') ||
     combined.includes('HELIX') ||
     combined.includes('FLASH') ||
@@ -61,9 +61,9 @@ function inferFamilyFromProviderOrKey(rawModelKey = '', modelId = '', apiProvide
 }
 
 /**
- * 判断一组模型标识字段是否指向 Gemini 4 Argon 系列模型（含 M417/M418/M419 及 M681 Orchestrator (Argon)）。
+ * Gemini 4 Argon M417/M418/M419 M681 Orchestrator (Argon) 
  *
- * @param {...string} parts 待检测的标识片段
+ * @param {...string} parts 
  * @returns {boolean}
  */
 export function isArgonModelIdentifier(...parts) {
@@ -78,9 +78,9 @@ export function isArgonModelIdentifier(...parts) {
 }
 
 /**
- * 判断一组模型标识字段是否指向 Gemini 4 Carbon 系列模型（含 M427/M429/M437/M438 及 M667 Orchestrator (Carbon)）。
+ * Gemini 4 Carbon M427/M429/M437/M438 M667 Orchestrator (Carbon) 
  *
- * @param {...string} parts 待检测的标识片段
+ * @param {...string} parts 
  * @returns {boolean}
  */
 export function isCarbonModelIdentifier(...parts) {
@@ -88,15 +88,15 @@ export function isCarbonModelIdentifier(...parts) {
   if (/\bcarbon\b|gemini-4-carbon|MODEL_PLACEHOLDER_M(?:42[79]|43[78]|667)\b/i.test(text)) {
     return true;
   }
-  if (/\bhydrogen\b|\bgemini-flash-worker-agy\b|MODEL_PLACEHOLDER_M(?:669|52[5678])\b/i.test(text)) {
+  if (/\bhydrogen\b|\bneon\b|\bgemini-flash-worker-agy\b|MODEL_PLACEHOLDER_M(?:669|52[5678]|53[2-7])\b/i.test(text)) {
     return false;
   }
-  return /\bgemini-pro-orchestrator\b(?!-argon)/i.test(text);
+  return /\bgemini-pro-orchestrator(?:-carbon)?(?=$|[^a-z0-9-])/i.test(text);
 }
 
 /**
- * 剥离模型展示名称末尾的思考档位后缀（如 `(XHigh)`、`(High)`、`(Medium)`、`(Thinking)`），提取基础模型族名。
- * 保留 `(Carbon)` / `(Argon)` 后缀，以便 `Orchestrator (Carbon)` 与 `Orchestrator (Argon)` 在汇总表中保持分列。
+ * `(XHigh)` `(High)` `(Medium)` `(Thinking)` 
+ * `(Carbon)` / `(Argon)` `Orchestrator (Carbon)` `Orchestrator (Argon)` 
  *
  * @param {string} [label='']
  * @returns {string}
@@ -120,8 +120,8 @@ const SLUG_TIER_LABELS = {
 };
 
 /**
- * 将严格匹配的 `gemini-3.1-pro`、`gemini-3.5-flash-lite`、`gemini-4-carbon` 或已知内部路由别名转为人类可读标签。
- * 使用行尾锚点 `$` 防止未收录新后缀（如 `gemini-3.1-pro-ultra-v2`）被静默截断伪装成旧模型获取错误定价。
+ * `gemini-3.1-pro` `gemini-3.5-flash-lite` `gemini-4-carbon` 
+ * `$` `gemini-3.1-pro-ultra-v2` 
  *
  * @param {string} [slug='']
  * @returns {string}
@@ -131,14 +131,14 @@ export function formatGenericModelSlug(slug = '') {
     .trim()
     .replace(/^session-display:/i, '');
   if (!s || /^MODEL_PLACEHOLDER_/i.test(s)) return '';
-  if (/^gemini-4-argon-(?:b|f|trial|disabled)$/i.test(s)) return 'Gemini 4 Argon';
+  if (/^gemini-4-argon-(?:f|disabled)$/i.test(s)) return 'Gemini 4 Argon';
   if (/^gemini-3\.8-flash-n$/i.test(s)) return 'Gemini 3.8 Flash';
   if (/^gemini-3\.7-flash-safety-le$/i.test(s)) return 'Gemini 3.7 Flash';
   if (/^gemini-3-flash-(?:[abd]|agent)$/i.test(s)) return 'Gemini 3.5 Flash';
   if (/^gemini-3-flash-c$/i.test(s)) return 'Gemini 3 Flash';
   if (/^gemini-pro-(?:default|agent|b)$/i.test(s)) return 'Gemini 3.1 Pro';
   const m = s.match(
-    /^gemini-(\d+(?:\.\d+)?)-(pro|flash|argon|carbon|hydrogen|helix)(?:-(lite))?(?:-(xhigh|high|medium|low|extra-low|tiered|preview))?$/i
+    /^gemini-(\d+(?:\.\d+)?)-(pro|flash|argon|carbon|hydrogen|helix|neon)(?:-(lite))?(?:-(xhigh|high|medium|low|extra-low|tiered|preview))?$/i
   );
   if (m) {
     const ver = m[1];
@@ -148,7 +148,7 @@ export function formatGenericModelSlug(slug = '') {
     const tierSuffix = SLUG_TIER_LABELS[suffixKey] ? ` (${SLUG_TIER_LABELS[suffixKey]})` : '';
     return `Gemini ${ver} ${tier}${lite}${tierSuffix}`;
   }
-  const codenameMatch = s.match(/^gemini-(hydrogen|helix)$/i);
+  const codenameMatch = s.match(/^gemini-(hydrogen|helix|neon)$/i);
   if (codenameMatch) {
     const codename =
       codenameMatch[1].charAt(0).toUpperCase() + codenameMatch[1].slice(1).toLowerCase();
@@ -157,86 +157,60 @@ export function formatGenericModelSlug(slug = '') {
   if (/^gemini-flash-worker-agy$/i.test(s)) {
     return 'Orchestrator Worker (Hydrogen)';
   }
+  const claudeM = s.match(
+    /^claude-(?:(\d+(?:[.-]\d+)?)-)?(sonnet|opus|haiku)(?:-(\d+(?:[.-]\d+)?))?(?:-\d{8})?(?:-(thinking|xhigh|high|medium|low|fast))?$/i
+  );
+  if (claudeM) {
+    const ver = (claudeM[1] || claudeM[3] || '').replace('-', '.');
+    const tier = claudeM[2].charAt(0).toUpperCase() + claudeM[2].slice(1).toLowerCase();
+    const suf = claudeM[4] ? ` (${SLUG_TIER_LABELS[claudeM[4].toLowerCase()] || claudeM[4]})` : '';
+    return `Claude ${ver ? `${ver} ` : ''}${tier}${suf}`.trim();
+  }
+  const gptM = s.match(/^(gpt-\d+(?:\.\d+)?|o[1-9]\d*)(?:-([a-z0-9]+))?(?:-(xhigh|high|medium|low))?$/i);
+  if (gptM) {
+    const base = gptM[1].toUpperCase();
+    const variant = gptM[2]
+      ? ` ${gptM[2].charAt(0).toUpperCase() + gptM[2].slice(1).toLowerCase()}`
+      : '';
+    const tier = gptM[3]
+      ? ` (${SLUG_TIER_LABELS[gptM[3].toLowerCase()] || gptM[3]})`
+      : '';
+    return `${base}${variant}${tier}`.trim();
+  }
+  if (/^[a-z0-9][a-z0-9._-]{2,}$/i.test(s) && s.includes('-')) {
+    const cleaned = s.replace(/-\d{8}$/, '');
+    return cleaned
+      .split('-')
+      .filter(Boolean)
+      .map((part) => {
+        if (/^(?:gpt|oss|llm|ai)$/i.test(part)) return part.toUpperCase();
+        if (/^o\d+$/i.test(part)) return part.toLowerCase();
+        return part.charAt(0).toUpperCase() + part.slice(1);
+      })
+      .join(' ');
+  }
   return '';
 }
 
-function extractStepTimestampMs(step) {
-  if (!step || typeof step !== 'object') return 0;
-  const direct = Number(step.createdAtMs);
-  if (Number.isFinite(direct) && direct > 0) return direct;
-  if (typeof step.createdAt === 'string' && step.createdAt.trim()) {
-    return parseIsoMs(step.createdAt.trim()) || 0;
+function lookupPricingMapEntry(mapObj, keys) {
+  if (!mapObj || typeof mapObj !== 'object') return null;
+  for (const k of keys) {
+    if (k && mapObj[k]) return mapObj[k];
   }
-  return 0;
+  return null;
 }
 
 /**
- * 根据目标时间戳匹配模型价格条目的时间阶段（`phases`，左闭右开 `[fromMs, untilMs)`）。
- * 未传入有效时间戳时按当前时刻匹配；未命中任何阶段或未配置阶段时回退至顶层基础单价。
- *
- * @param {object|null} pricingEntry
- * @param {number|string|null} [atMs]
- * @returns {object|null}
+ * Resolve model metadata and USD/1M pricing using dynamic catalog, custom user overrides,
+ * static placeholder map, and heuristic future-model slug formatting.
  */
-export function resolvePricingAt(pricingEntry, atMs) {
-  if (!pricingEntry || typeof pricingEntry !== 'object') return null;
-  const baseEntry = pricingEntry._basePricing || pricingEntry;
-  const phases = baseEntry.phases;
-  if (!Array.isArray(phases) || phases.length === 0) return baseEntry;
-
-  let tMs = 0;
-  if (typeof atMs === 'number' && Number.isFinite(atMs) && atMs > 0) {
-    tMs = atMs;
-  } else if (typeof atMs === 'string' && atMs.trim()) {
-    tMs = parseIsoMs(atMs.trim()) || 0;
-  }
-  if (tMs <= 0) {
-    tMs = Date.now();
-  }
-
-  for (let i = 0; i < phases.length; i++) {
-    const ph = phases[i];
-    if (!ph || typeof ph !== 'object') continue;
-    const fromMs = Number.isFinite(ph.fromMs)
-      ? ph.fromMs
-      : typeof ph.from === 'string' && ph.from.trim()
-        ? parseIsoMs(ph.from.trim()) || -Infinity
-        : -Infinity;
-    const untilMs = Number.isFinite(ph.untilMs)
-      ? ph.untilMs
-      : typeof ph.until === 'string' && ph.until.trim()
-        ? parseIsoMs(ph.until.trim()) || Infinity
-        : Infinity;
-    if (tMs >= fromMs && tMs < untilMs) {
-      if (
-        ph.input === baseEntry.input &&
-        ph.cache === baseEntry.cache &&
-        ph.output === baseEntry.output
-      ) {
-        return baseEntry;
-      }
-      const resolved = {
-        ...baseEntry,
-        input: ph.input,
-        cache: ph.cache,
-        output: ph.output,
-      };
-      Object.defineProperty(resolved, '_basePricing', {
-        value: baseEntry,
-        enumerable: false,
-      });
-      return resolved;
-    }
-  }
-  return baseEntry;
-}
-
-function resolveModelCatalogEntry(
+export function resolveModelInfo(
   rawModelKey,
   dynamicModelMap = new Map(),
   apiProvider = '',
   modelDisplayName = '',
-  responseModel = ''
+  responseModel = '',
+  customPricingMap = null
 ) {
   const dynEntry =
     dynamicModelMap && typeof dynamicModelMap.get === 'function'
@@ -244,7 +218,6 @@ function resolveModelCatalogEntry(
       : null;
   const staticPh = PLACEHOLDER_MAP[rawModelKey] || null;
 
-  // 若 GetUserStatus 仅下发了 label 而未下发真实 modelId（或被填成占位符自身），继续合并静态 PLACEHOLDER_MAP 的精确 modelId
   const dynValidModelId =
     dynEntry?.modelId && dynEntry.modelId !== rawModelKey ? dynEntry.modelId : '';
   const mergedModelId = dynValidModelId || staticPh?.modelId || dynEntry?.modelId || '';
@@ -276,9 +249,8 @@ function resolveModelCatalogEntry(
     formatGenericModelSlug(rawModelKey) ||
     formatGenericModelSlug(cleanResponseModel) ||
     cleanRawFallback ||
-    '模型未知';
+    'Unknown Model';
 
-  // 先生成保留档位后缀的精确 Slug（如 "Gemini 3.8 Flash (Low)" -> "gemini-3.8-flash-low"），防止被基础族名定价覆盖
   const tieredSlug = derivedDisplay
     .toLowerCase()
     .replace(/[()]/g, ' ')
@@ -298,6 +270,43 @@ function resolveModelCatalogEntry(
   const isOpaqueOrchestratorResp = Boolean(
     cleanResponseModel && /\borchestrator\b/i.test(cleanResponseModel)
   );
+  const lookupKeys = [
+    modelId,
+    rawModelKey,
+    cleanResponseModel && !isOpaqueOrchestratorResp ? cleanResponseModel : '',
+    tieredSlug,
+    tieredDashedSlug,
+    canonicalSlug,
+    dashedSlug,
+    derivedDisplay,
+    baseLabel,
+    cleanResponseModel && isOpaqueOrchestratorResp ? cleanResponseModel : '',
+  ];
+
+  const customMatch = lookupPricingMapEntry(customPricingMap, lookupKeys);
+  if (customMatch) {
+    const inferred = inferFamilyFromProviderOrKey(rawModelKey, modelId, apiProvider);
+    const customFamily =
+      customMatch.family && customMatch.family !== 'Other' ? customMatch.family : inferred;
+    return {
+      rawModel: rawModelKey,
+      modelId,
+      label: derivedDisplay,
+      baseLabel,
+      shortName: customMatch.short || derivedDisplay,
+      family: customFamily,
+      pricing: {
+        input: Number(customMatch.input || 0),
+        cache: Number(customMatch.cache || 0),
+        output: Number(customMatch.output || 0),
+        short: customMatch.short || derivedDisplay,
+        family: customFamily,
+      },
+      isCustomPrice: true,
+      isEstimatedPrice: false,
+    };
+  }
+
   const explicitPricing =
     MODEL_PRICING[modelId] ||
     MODEL_PRICING[rawModelKey] ||
@@ -314,72 +323,37 @@ function resolveModelCatalogEntry(
 
   if (explicitPricing) {
     return {
-      catalogPricing: explicitPricing,
-      info: {
-        rawModel: rawModelKey,
-        modelId,
-        label: derivedDisplay,
-        baseLabel,
-        shortName: explicitPricing.short,
-        family: explicitPricing.family,
-        pricing: explicitPricing,
-        isEstimatedPrice: false,
-      },
+      rawModel: rawModelKey,
+      modelId,
+      label: derivedDisplay,
+      baseLabel,
+      shortName: explicitPricing.short,
+      family: explicitPricing.family,
+      pricing: explicitPricing,
+      isCustomPrice: false,
+      isEstimatedPrice: false,
     };
   }
 
   const inferredFamily = inferFamilyFromProviderOrKey(rawModelKey, modelId, apiProvider);
   return {
-    catalogPricing: null,
-    info: {
-      rawModel: rawModelKey,
-      modelId,
-      label: derivedDisplay,
-      baseLabel,
-      shortName: derivedDisplay,
-      family: inferredFamily,
-      pricing: null,
-      isEstimatedPrice: true,
-    },
+    rawModel: rawModelKey,
+    modelId,
+    label: derivedDisplay,
+    baseLabel,
+    shortName: derivedDisplay,
+    family: inferredFamily,
+    pricing: null,
+    isCustomPrice: false,
+    isEstimatedPrice: true,
   };
 }
 
-/**
- * 综合动态模型目录、占位符字典与价格表，解析步骤对应的模型元数据与指定时刻的单价配置。
- *
- * @param {string} rawModelKey 步骤记录的原始模型键（如 `MODEL_PLACEHOLDER_M320`）
- * @param {Map<string, {modelId: string, label: string, quotaInfo?: object}>} [dynamicModelMap=new Map()] 从 `GetUserStatus` 提取的动态模型表
- * @param {string} [apiProvider=''] API 提供商枚举
- * @param {string} [modelDisplayName=''] 已知的模型展示名称
- * @param {string} [responseModel=''] 实际响应的上游模型 ID（如 `gemini-3.8-flash-n`）
- * @param {number|string|null} [atMs=0] 步骤发生时间戳（缺省按当前时刻匹配阶段价格）
- */
-export function resolveModelInfo(
-  rawModelKey,
-  dynamicModelMap = new Map(),
-  apiProvider = '',
-  modelDisplayName = '',
-  responseModel = '',
-  atMs = 0
-) {
-  const { catalogPricing, info } = resolveModelCatalogEntry(
-    rawModelKey,
-    dynamicModelMap,
-    apiProvider,
-    modelDisplayName,
-    responseModel
-  );
-  if (!catalogPricing) return info;
-  const effectivePricing = resolvePricingAt(catalogPricing, atMs);
-  return effectivePricing === catalogPricing ? info : { ...info, pricing: effectivePricing };
-}
-
-/** 在单次遥测请求内按模型身份与价格阶段复用解析结果。 */
-export function createStepModelResolver(dynamicModelMap) {
+/** Cache resolved model metadata and pricing per telemetry request. */
+export function createStepModelResolver(dynamicModelMap, customPricingMap = null) {
   const models = new Map();
   return (step) => {
-    const stepMs = extractStepTimestampMs(step);
-    const { modelKey, apiProvider = '', modelDisplayName = '', responseModel = '' } = step || {};
+    const { modelKey, apiProvider = '', modelDisplayName = '', responseModel = '' } = step;
     if (
       typeof modelKey !== 'string' ||
       typeof apiProvider !== 'string' ||
@@ -392,7 +366,7 @@ export function createStepModelResolver(dynamicModelMap) {
         apiProvider,
         modelDisplayName,
         responseModel,
-        stepMs
+        customPricingMap
       );
     }
     let providers = models.get(modelKey);
@@ -401,56 +375,25 @@ export function createStepModelResolver(dynamicModelMap) {
     if (!names) providers.set(apiProvider, (names = new Map()));
     let responses = names.get(modelDisplayName);
     if (!responses) names.set(modelDisplayName, (responses = new Map()));
-    let cached = responses.get(responseModel);
-    if (!cached) {
-      const { catalogPricing, info } = resolveModelCatalogEntry(
+    let info = responses.get(responseModel);
+    if (!info) {
+      info = resolveModelInfo(
         modelKey,
         dynamicModelMap,
         apiProvider,
         modelDisplayName,
-        responseModel
+        responseModel,
+        customPricingMap
       );
-      cached = {
-        catalogPricing,
-        baseInfo: info,
-        byPhaseIdx: catalogPricing?.phases?.length ? new Map() : null,
-      };
-      responses.set(responseModel, cached);
+      responses.set(responseModel, info);
     }
-    if (!cached.byPhaseIdx) {
-      return cached.baseInfo;
-    }
-    const tMs = stepMs > 0 ? stepMs : Date.now();
-    const phases = cached.catalogPricing.phases;
-    let phaseIdx = -1;
-    for (let i = 0; i < phases.length; i++) {
-      const ph = phases[i];
-      const fromMs = Number.isFinite(ph.fromMs) ? ph.fromMs : -Infinity;
-      const untilMs = Number.isFinite(ph.untilMs) ? ph.untilMs : Infinity;
-      if (tMs >= fromMs && tMs < untilMs) {
-        phaseIdx = i;
-        break;
-      }
-    }
-    let phasedInfo = cached.byPhaseIdx.get(phaseIdx);
-    if (!phasedInfo) {
-      const effectivePricing =
-        phaseIdx >= 0
-          ? resolvePricingAt(cached.catalogPricing, tMs)
-          : cached.catalogPricing;
-      phasedInfo =
-        effectivePricing === cached.catalogPricing
-          ? cached.baseInfo
-          : { ...cached.baseInfo, pricing: effectivePricing };
-      cached.byPhaseIdx.set(phaseIdx, phasedInfo);
-    }
-    return phasedInfo;
+    return info;
   };
 }
 
 /**
- * 为不透明的 Orchestrator 路由模型 ID 补充底层实际模型代号标注（如 `gemini-pro-orchestrator (carbon-4)`），
- * 普通透明上游模型 ID（如 `gemini-3.8-flash-n`、`gemini-4-hydrogen`）原样返回。
+ * Orchestrator ID `gemini-pro-orchestrator (carbon-4)` 
+ * ID `gemini-3.8-flash-n` `gemini-4-hydrogen` 
  *
  * @param {string} [rawUpstream='']
  * @param {ReturnType<typeof resolveModelInfo>|null} [mInfo=null]
@@ -469,6 +412,9 @@ export function formatUpstreamModelId(rawUpstream = '', mInfo = null) {
   ) {
     return `${s} (hydrogen-4)`;
   }
+  if (/\bneon\b|MODEL_PLACEHOLDER_M53[2-7]\b/i.test(metaText)) {
+    return /-neon\b/i.test(s) ? s : `${s} (neon-4)`;
+  }
   if (isArgonModelIdentifier(mInfo?.rawModel, mInfo?.modelId, mInfo?.label, s)) {
     return `${s} (argon-4)`;
   }
@@ -479,8 +425,8 @@ export function formatUpstreamModelId(rawUpstream = '', mInfo = null) {
 }
 
 /**
- * 计算单个步骤的 API 等效美元成本；若模型未定价（`pricing === null`）则返回 `null`。
- * 对负数、NaN 或非有限数值统一安全钳制为 0。
+ * API `pricing === null` `null` 
+ * NaN 0 
  *
  * @param {{ inputTokens: number, cacheReadTokens: number, outputTokens: number }} step
  * @param {{ input: number, cache: number, output: number } | null} pricing
@@ -488,17 +434,12 @@ export function formatUpstreamModelId(rawUpstream = '', mInfo = null) {
  */
 export function computeStepCost(step, pricing) {
   if (!pricing) return null;
-  const stepMs = extractStepTimestampMs(step);
-  const effectivePricing =
-    stepMs > 0 && Array.isArray(pricing.phases) && pricing.phases.length > 0
-      ? resolvePricingAt(pricing, stepMs)
-      : pricing;
   const safeTok = (v) => {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
-  const inCost = (safeTok(step?.inputTokens) / 1_000_000) * effectivePricing.input;
-  const cacheCost = (safeTok(step?.cacheReadTokens) / 1_000_000) * effectivePricing.cache;
-  const outCost = (safeTok(step?.outputTokens) / 1_000_000) * effectivePricing.output;
+  const inCost = (safeTok(step?.inputTokens) / 1_000_000) * pricing.input;
+  const cacheCost = (safeTok(step?.cacheReadTokens) / 1_000_000) * pricing.cache;
+  const outCost = (safeTok(step?.outputTokens) / 1_000_000) * pricing.output;
   return inCost + cacheCost + outCost;
 }

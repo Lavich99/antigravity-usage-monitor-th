@@ -1,10 +1,10 @@
 /**
- * @fileoverview Antigravity Language Server Connect RPC 客户端与官方配额摘要缓存。
+ * @fileoverview Antigravity Language Server Connect RPC 
  *
- * 负责：
- * 1. 向本地 Language Server 发起带 CSRF 鉴权与超时保护的 Connect RPC 调用 (`callLsRpc`)；
- * 2. 拉取并缓存 `RetrieveUserQuotaSummary` 官方实时配额摘要（常规轮询使用 10 秒短期缓存与失败退避冷却，
- *    并在缓存过期或强制刷新时穿透 `language_server.exe` 内部 3 分钟陈旧缓存）。
+ * 
+ * 1. Language Server CSRF Connect RPC (`callLsRpc`) 
+ * 2. `RetrieveUserQuotaSummary` 10 
+ * `language_server.exe` 3 
  */
 
 import { lsRuntimeEndpoint, quotaSummaryCache } from './config.mjs';
@@ -12,6 +12,7 @@ import { ensureLsEndpointDiscovered } from './ls-discovery.mjs';
 
 const QUOTA_CACHE_TTL_MS = 10_000;
 const QUOTA_RETRY_COOLDOWN_MS = 5_000;
+const QUOTA_COLD_RETRY_COOLDOWN_MS = 1_500;
 let contextModelCatalog = null;
 
 export function getContextModelCatalog() {
@@ -41,11 +42,11 @@ async function postLsRpcOnce(baseUrl, csrfToken, method, body, timeoutMs) {
 }
 
 /**
- * 调用本地 `LanguageServerService` 的指定 RPC 方法（支持按需发现与宿主重启重连）。
+ * `LanguageServerService` RPC 
  *
- * @param {string} method RPC 方法名（如 `'GetUserStatus'`、`'GetCascadeTrajectory'`）
- * @param {object} [body={}] 请求 JSON 载荷
- * @param {number} [timeoutMs=5000] 超时时间（毫秒）
+ * @param {string} method RPC `'GetUserStatus'` `'GetCascadeTrajectory'` 
+ * @param {object} [body={}] JSON 
+ * @param {number} [timeoutMs=5000] 
  * @returns {Promise<object>}
  */
 export async function callLsRpc(method, body = {}, timeoutMs = 5000) {
@@ -113,16 +114,16 @@ export async function callLsRpc(method, body = {}, timeoutMs = 5000) {
 }
 
 /**
- * 获取官方实时配额摘要（`RetrieveUserQuotaSummary`）。
+ * `RetrieveUserQuotaSummary` 
  *
- * 缓存策略：
- * - 常规轮询在 10 秒内直接复用内存缓存，避免高频打满上游接口；
- * - 常规轮询发生网络失败或空载荷时进入 5 秒冷却退避，避免每 2 秒重复超时阻塞；
- * - 当超过 TTL 或传入 `forceRefresh = true`（如手动刷新或检测到账号切换）时，
- *   向 LS 传递 `{ forceRefresh: true }`，绕过 `language_server.exe` 自身的 3 分钟缓存。
+ * 
+ * - 10 
+ * - 5 2 
+ * - TTL `forceRefresh = true` 
+ * LS `{ forceRefresh: true }` `language_server.exe` 3 
  *
- * @param {boolean} [forceRefresh=false] 是否强制穿透本地缓存与失败冷却
- * @param {string} [accountName=''] 发起查询时宿主报告的账号，用于隔离配额缓存
+ * @param {boolean} [forceRefresh=false] 
+ * @param {string} [accountName=''] 
  * @returns {Promise<{data: object|null, fetchedAtMs: number, isStale: boolean, refreshFailed: boolean, error: string|null, fromCache: boolean}>}
  */
 export async function getOfficialQuotaSummary(forceRefresh = false, accountName = '') {
@@ -148,10 +149,11 @@ export async function getOfficialQuotaSummary(forceRefresh = false, accountName 
       fromCache: true,
     };
   }
+  const activeCooldownMs = quotaSummaryCache.data ? QUOTA_RETRY_COOLDOWN_MS : QUOTA_COLD_RETRY_COOLDOWN_MS;
   if (
     !forceRefresh &&
     quotaSummaryCache.lastAttemptTs > 0 &&
-    now - quotaSummaryCache.lastAttemptTs < QUOTA_RETRY_COOLDOWN_MS &&
+    now - quotaSummaryCache.lastAttemptTs < activeCooldownMs &&
     quotaSummaryCache.error
   ) {
     return {
@@ -165,12 +167,38 @@ export async function getOfficialQuotaSummary(forceRefresh = false, accountName 
   }
 
   quotaSummaryCache.lastAttemptTs = now;
+  const extractQuotaPayload = (rpcRes) => (rpcRes?.response !== undefined ? rpcRes.response : rpcRes);
+  const hasQuotaGroupsOrBuckets = (p) =>
+    Boolean(p && typeof p === 'object' && !Array.isArray(p) && ((Array.isArray(p.groups) && p.groups.length > 0) || (Array.isArray(p.buckets) && p.buckets.length > 0)));
+
   try {
-    const res = await callLsRpc('RetrieveUserQuotaSummary', { forceRefresh: true }, 6000);
+    let res = null;
+    if (!forceRefresh && !quotaSummaryCache.data) {
+      res = await callLsRpc('RetrieveUserQuotaSummary', { forceRefresh: false }, 3000).catch(() => null);
+      if (!hasQuotaGroupsOrBuckets(extractQuotaPayload(res))) {
+        res = null;
+      }
+    }
+    if (!res) {
+      try {
+        res = await callLsRpc('RetrieveUserQuotaSummary', { forceRefresh: true }, 6000);
+      } catch (forceErr) {
+        if (!quotaSummaryCache.data) {
+          const fallbackRes = await callLsRpc('RetrieveUserQuotaSummary', { forceRefresh: false }, 2000).catch(() => null);
+          if (hasQuotaGroupsOrBuckets(extractQuotaPayload(fallbackRes))) {
+            res = fallbackRes;
+          } else {
+            throw forceErr;
+          }
+        } else {
+          throw forceErr;
+        }
+      }
+    }
     const { userStatus } = await callLsRpc('GetUserStatus', {}, 2000);
     if ((userStatus?.email || userStatus?.name || '') !== accountName) return {};
     if (generation !== quotaSummaryCache.accountGeneration) return {};
-    const payload = res?.response !== undefined ? res.response : res;
+    const payload = extractQuotaPayload(res);
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
       const normalized =
         Array.isArray(payload.groups) || Array.isArray(payload.buckets)

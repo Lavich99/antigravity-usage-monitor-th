@@ -1,26 +1,19 @@
 /**
- * @fileoverview 双栖模式（Window Overlay）本地回环桥接服务与 CDP 多窗口自动挂载调度器。
+ * @fileoverview Window Overlay CDP 
  *
- * 职责边界：
- * 1. 在 Sidecar 进程内维护仅绑定 `127.0.0.1` 随机端口的受保护 HTTP 桥接端点，
- *    通过一次性 256-bit 随机令牌 (`X-Usage-Monitor-Token`)、严格 `Origin` 校验与 Private Network CORS 头，
- *    为主窗口 Shadow DOM 内的悬浮面板提供与辅助栏完全一致的 `/api/*` 遥测与控制接口；
- * 2. 周期性探测本机 `Antigravity/DevToolsActivePort`，发现所有打开的主聊天窗口（支持多窗口并存），
- *    按需将最新的 `styles.css` 与 `app.js` 热挂载至窗口顶栏，并在用户关闭双栖开关时立即清理卸载；
- * 3. 完全不触碰宿主 `app.asar` 文件，客户端升级或无调试端口时静默回退至右侧辅助栏。
+ * 
+ * 1. Sidecar `127.0.0.1` HTTP 
+ * 256-bit (`X-Usage-Monitor-Token`) `Origin` Private Network CORS 
+ * Shadow DOM `/api/*` 
+ * 2. `Antigravity/DevToolsActivePort` 
+ * `styles.css` `app.js` 
+ * 3. `app.asar` 
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import {
-  BRIDGE_API_PATHS,
-  CONTEXT_WINDOWS_GLOBAL_KEY,
-  WINDOW_BRIDGE_KEY,
-  WINDOW_BRIDGE_ROUTE_KEY,
-  WINDOW_OVERLAY_KEY,
-  WINDOW_OVERLAY_METHODS,
-} from '../shared/window-bridge-protocol.mjs';
 import {
   DATA_DIR,
   computeRuntimeCodeVersion,
@@ -30,30 +23,20 @@ import {
   normalizeWindowMountMode,
   saveJson,
 } from './config.mjs';
-import {
-  createContextWindowSyncExpression,
-  getContextWindowModels,
-  resolveContextWindowRules,
-} from './context-windows.mjs';
-import {
-  ensureDesktopLaunchEntriesConfigured,
-  resolveDesktopHostExecutable,
-} from './desktop-launcher-config.mjs';
-import { callLsRpc, getContextModelCatalog } from './ls-rpc.mjs';
-
-const windowBridgeRef = `window[${JSON.stringify(WINDOW_BRIDGE_KEY)}]`;
-const windowOverlayRef = `window[${JSON.stringify(WINDOW_OVERLAY_KEY)}]`;
-const windowContextWindowsRef = `window[${JSON.stringify(CONTEXT_WINDOWS_GLOBAL_KEY)}]`;
-const windowBridgeRouteKey = JSON.stringify(WINDOW_BRIDGE_ROUTE_KEY);
-const overlayMethods = Object.fromEntries(
-  Object.entries(WINDOW_OVERLAY_METHODS).map(([method, key]) => [method, JSON.stringify(key)])
-);
 
 const BRIDGE_MAX_BODY_BYTES = 64 * 1024;
-const ALLOWED_BRIDGE_PATHS = new Set(BRIDGE_API_PATHS);
+const ALLOWED_BRIDGE_PATHS = new Set([
+  '/api/telemetry',
+  '/api/settings',
+  '/api/settings/reset',
+  '/api/cache/rebuild',
+  '/api/context-window',
+  '/api/cloud-sync',
+  '/api/plugin-update',
+]);
 
 /**
- * 解析各操作系统下 Antigravity 2.0 与 Antigravity IDE 写入 `DevToolsActivePort` 的候选路径列表。
+ * Antigravity 2.0 Antigravity IDE `DevToolsActivePort` 
  *
  * @param {Record<string, string|undefined>} [env=process.env]
  * @param {string} [platform=process.platform]
@@ -83,10 +66,6 @@ export function resolveDevToolsPortCandidates(
     return [
       join(homeDir, 'Library', 'Application Support', 'Antigravity', 'DevToolsActivePort'),
       join(homeDir, 'Library', 'Application Support', 'Antigravity IDE', 'DevToolsActivePort'),
-      join(homeDir, 'Library', 'Application Support', 'antigravity', 'DevToolsActivePort'),
-      join(homeDir, 'Library', 'Application Support', 'antigravity-ide', 'DevToolsActivePort'),
-      join(homeDir, '.config', 'Antigravity', 'DevToolsActivePort'),
-      join(homeDir, '.config', 'Antigravity IDE', 'DevToolsActivePort'),
     ];
   }
   const configHome = env?.XDG_CONFIG_HOME || join(homeDir, '.config');
@@ -97,7 +76,7 @@ export function resolveDevToolsPortCandidates(
 }
 
 /**
- * 解析 Antigravity IDE 启动参数文件 `argv.json` 路径（兼容便携模式 `VSCODE_PORTABLE`）。
+ * Antigravity IDE `argv.json` `VSCODE_PORTABLE` 
  *
  * @param {Record<string, string|undefined>} [env=process.env]
  * @param {string} [homeDir=homedir()]
@@ -112,7 +91,7 @@ export function resolveIdeArgvPath(env = process.env, homeDir = homedir()) {
 }
 
 /**
- * 词法扫描 JSONC 文本（支持 `//`、`/* ... * /` 注释与尾随逗号），提取纯 JSON 字符串及顶层键值坐标。
+ * JSONC `//` `/* ... * /` JSON 
  *
  * @param {string} rawText
  */
@@ -267,16 +246,16 @@ function scanJsoncObject(rawText) {
 }
 
 /**
- * 在保留全部 JSONC 注释、缩进与既有键的前提下，确保 `argv.json` 包含字符串类型的
- * `"remote-debugging-port"`（Antigravity IDE 主进程仅接受非空字符串值，数值 `0` 会被忽略）。
+ * JSONC `argv.json` 
+ * `"remote-debugging-port"` Antigravity IDE `0` 
  *
  * @param {string} rawText
  * @returns {{ changed: boolean, valid: boolean, alreadyConfigured?: boolean, portValue?: string, reason?: string, text: string }}
  */
 export function ensureRemoteDebuggingInArgvText(rawText) {
   if (typeof rawText !== 'string' || !rawText.trim()) {
-    // 新建文件使用纯 JSON（无注释），同时兼容 VS Code/IDE JSONC 解析器与 Electron 严格 JSON.parse()
-    const fresh = '{\n\t"remote-debugging-port": "0"\n}\n';
+    const fresh =
+      '{\n\t// Automatically configured by Antigravity Usage & Speed Monitor for topbar overlay support.\n\t"remote-debugging-port": "0"\n}\n';
     return { changed: true, valid: true, portValue: '0', text: fresh };
   }
 
@@ -348,14 +327,25 @@ export function ensureRemoteDebuggingInArgvText(rawText) {
   };
 }
 
-function patchSingleHostArgvFile(argvPath, { createDir = false, missingReason = 'dir_missing' } = {}) {
+/**
+ * `~/.antigravity-ide` `argv.json` 
+ * `"remote-debugging-port": "0"` Antigravity IDE `DevToolsActivePort` 
+ *
+ * @param {{ env?: Record<string, string|undefined>, homeDir?: string, enabled?: boolean }} [options]
+ */
+export function ensureIdeRemoteDebuggingArgv({
+  env = process.env,
+  homeDir = homedir(),
+  enabled = true,
+} = {}) {
+  if (!enabled) {
+    return { checked: false, updated: false, reason: 'disabled' };
+  }
+  const argvPath = resolveIdeArgvPath(env, homeDir);
   try {
     const dirPath = dirname(argvPath);
     if (!existsSync(dirPath)) {
-      if (!createDir) {
-        return { checked: true, updated: false, reason: missingReason, argvPath };
-      }
-      mkdirSync(dirPath, { recursive: true });
+      return { checked: true, updated: false, reason: 'ide_dir_missing', argvPath };
     }
     const rawText = existsSync(argvPath) ? readFileSync(argvPath, 'utf8') : '';
     const patched = ensureRemoteDebuggingInArgvText(rawText);
@@ -379,7 +369,7 @@ function patchSingleHostArgvFile(argvPath, { createDir = false, missingReason = 
       try {
         unlinkSync(tmpPath);
       } catch {
-        // 忽略临时文件清理异常
+ // 
       }
       writeFileSync(argvPath, patched.text, 'utf8');
     }
@@ -400,32 +390,101 @@ function patchSingleHostArgvFile(argvPath, { createDir = false, missingReason = 
 }
 
 /**
- * 当本机存在 `~/.antigravity-ide` 配置目录且开启双栖模式时，自动补齐 `argv.json` 中的
- * `"remote-debugging-port": "0"`，使 Antigravity IDE 下次启动时自动生成 `DevToolsActivePort`。
- *
- * @param {{ env?: Record<string, string|undefined>, homeDir?: string, enabled?: boolean }} [options]
- */
-export function ensureIdeRemoteDebuggingArgv({
-  env = process.env,
-  homeDir = homedir(),
-  enabled = true,
-} = {}) {
-  if (!enabled) {
-    return { checked: false, updated: false, reason: 'disabled' };
-  }
-  const argvPath = resolveIdeArgvPath(env, homeDir);
-  return patchSingleHostArgvFile(argvPath, {
-    createDir: false,
-    missingReason: 'ide_dir_missing',
-  });
-}
-
-/**
- * 从 `DevToolsActivePort` 文件文本首行提取合法的本地调试端口号。
+ * `DevToolsActivePort` 
  *
  * @param {string} rawText
  * @returns {number|null}
  */
+export function resolveDesktopShortcutCandidates(
+  env = process.env,
+  platform = process.platform,
+  homeDir = homedir()
+) {
+  if (platform !== 'win32') return [];
+  const appData = env?.APPDATA || join(homeDir, 'AppData', 'Roaming');
+  return [
+    join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Antigravity.lnk'),
+    join(appData, 'Microsoft', 'Internet Explorer', 'Quick Launch', 'User Pinned', 'TaskBar', 'Antigravity.lnk'),
+    join(homeDir, 'Desktop', 'Antigravity.lnk'),
+  ];
+}
+
+export function ensureDesktopRemoteDebuggingShortcuts({
+  env = process.env,
+  platform = process.platform,
+  homeDir = homedir(),
+  enabled = true,
+  shortcutPaths = null,
+} = {}) {
+  if (!enabled || platform !== 'win32') {
+    return Promise.resolve({ checked: false, updated: false, reason: 'skipped', updatedPaths: [] });
+  }
+  const candidates = Array.isArray(shortcutPaths)
+    ? shortcutPaths
+    : resolveDesktopShortcutCandidates(env, platform, homeDir);
+  const existing = candidates.filter((filePath) => {
+    try {
+      return Boolean(filePath) && existsSync(filePath);
+    } catch {
+      return false;
+    }
+  });
+  if (!existing.length) {
+    return Promise.resolve({ checked: true, updated: false, reason: 'no_shortcuts', updatedPaths: [] });
+  }
+
+  const encodedPaths = Buffer.from(JSON.stringify(existing), 'utf8').toString('base64');
+  const psLines = [
+    "$paths = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('" + encodedPaths + "')) | ConvertFrom-Json",
+    "if ($paths -is [string]) { $paths = @($paths) }",
+    "$sh = New-Object -ComObject WScript.Shell",
+    "$updated = New-Object System.Collections.Generic.List[string]",
+    "foreach ($p in $paths) {",
+    "  try {",
+    "    $lnk = $sh.CreateShortcut($p)",
+    "    if ($lnk.TargetPath -and ([System.IO.Path]::GetFileName($lnk.TargetPath) -ieq 'Antigravity.exe')) {",
+    "      $curArgs = [string]$lnk.Arguments",
+    "      if ($curArgs -notmatch '(^|\\s)--remote-debugging-port(=|\\s|$)') {",
+    "        $lnk.Arguments = if ([string]::IsNullOrWhiteSpace($curArgs)) { '--remote-debugging-port=0' } else { ($curArgs.Trim() + ' --remote-debugging-port=0') }",
+    "        $lnk.Save()",
+    "        [void]$updated.Add($p)",
+    "      }",
+    "    }",
+    "  } catch {}",
+    "}",
+    "@{ updatedPaths = @($updated) } | ConvertTo-Json -Compress",
+  ];
+  const encodedCmd = Buffer.from(psLines.join('\n'), 'utf16le').toString('base64');
+
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodedCmd],
+      { timeout: 5000, windowsHide: true },
+      (err, stdout) => {
+        if (err) {
+          resolve({ checked: true, updated: false, reason: err.code || 'powershell_error', updatedPaths: [] });
+          return;
+        }
+        try {
+          const parsed = JSON.parse(String(stdout || '').trim() || '{}');
+          const updatedPaths = Array.isArray(parsed.updatedPaths)
+            ? parsed.updatedPaths
+            : typeof parsed.updatedPaths === 'string' && parsed.updatedPaths
+              ? [parsed.updatedPaths]
+              : [];
+          resolve({
+            checked: true,
+            updated: updatedPaths.length > 0,
+            updatedPaths,
+          });
+        } catch {
+          resolve({ checked: true, updated: false, reason: 'parse_error', updatedPaths: [] });
+        }
+      }
+    );
+  });
+}
 export function parseDevToolsPortFile(rawText) {
   if (typeof rawText !== 'string' || !rawText) return null;
   const firstLine = rawText.split(/\r?\n/)[0]?.trim() || '';
@@ -438,8 +497,8 @@ const IDE_WORKBENCH_URL_RE =
   /^vscode-file:\/\/vscode-app\/.+\/workbench(?:\.esm|-jetski-agent)?\.html(?:[?#]|$)/i;
 
 /**
- * 判断 CDP `/json/list` 返回的目标是否为 Antigravity 2.0 或 Antigravity IDE 主窗口页面，
- * 严格排除 `vscode-webview://` 子视图、`sharedProcess.html`、DevTools 面板与非本机回环地址。
+ * CDP `/json/list` Antigravity 2.0 Antigravity IDE 
+ * `vscode-webview://` `sharedProcess.html` DevTools 
  *
  * @param {object} target
  * @returns {boolean}
@@ -461,8 +520,8 @@ export function isAntigravityMainPageTarget(target) {
 }
 
 /**
- * 从 Antigravity IDE 内嵌扩展聊天 iframe 地址（如 `http://127.0.0.1:41362/c/<uuid>?extensionView=true`）
- * 中提取当前正在查看的会话 UUID。
+ * Antigravity IDE iframe `http://127.0.0.1:41362/c/<uuid>?extensionView=true` 
+ * UUID 
  *
  * @param {unknown} rawUrl
  * @returns {string}
@@ -483,8 +542,8 @@ export function extractIdeExtensionCascadeId(rawUrl) {
 }
 
 /**
- * 判断 CDP 目标是否为 Antigravity IDE 内嵌扩展聊天视图（OOPIF `iframe`），
- * 严格限定本机回环地址并校验 `extensionView`/`extensionVariant` 参数、`/c/<uuid>` 路由或已发现的 LS Hub 端口。
+ * CDP Antigravity IDE OOPIF `iframe` 
+ * `extensionView`/`extensionVariant` `/c/<uuid>` LS Hub 
  *
  * @param {object} target
  * @param {string} [lsAddr='']
@@ -515,15 +574,15 @@ export function isIdeExtensionChatTarget(target, lsAddr = '') {
         return true;
       }
     } catch {
-      // 忽略非法 URL
+ // URL
     }
   }
   return false;
 }
 
 /**
- * 将同一调试端口下的扩展聊天子 iframe 会话路由与可注入聊天目标（按 `parentId` 树隔离，单窗口缺省时安全兜底）
- * 关联到对应的 Antigravity IDE `workbench.html` 主窗口目标上。
+ * iframe `parentId` 
+ * Antigravity IDE `workbench.html` 
  *
  * @param {Array<object>} rawTargets
  * @param {Array<object>} mainTargets
@@ -595,7 +654,7 @@ export function associateIdeIframeRoutes(rawTargets, mainTargets, options = unde
       try {
         origin = new URL(rawUrl).origin;
       } catch {
-        // 忽略非法 URL
+ // URL
       }
       const fallbackUuidMatch = rawUrl.match(
         /\/c\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[/?#]|$)/i
@@ -648,7 +707,7 @@ export function associateIdeIframeRoutes(rawTargets, mainTargets, options = unde
 }
 
 /**
- * 校验桥接请求的 `Origin` 是否来自本机 Antigravity 2.0 HTTPS 回环源或 Antigravity IDE `vscode-file` 源。
+ * `Origin` Antigravity 2.0 HTTPS Antigravity IDE `vscode-file` 
  *
  * @param {unknown} origin
  * @returns {boolean}
@@ -662,7 +721,7 @@ export function isAllowedBridgeOrigin(origin) {
 }
 
 /**
- * 固定时间比较两个等长 ASCII 令牌字符串，避免时序侧信道泄露。
+ * ASCII 
  *
  * @param {string} actual
  * @param {string} expected
@@ -683,7 +742,7 @@ function verifyBridgeToken(actual, expected, timingSafeEqualFn = null) {
 }
 
 /**
- * 创建双栖模式桥接与 CDP 热挂载控制器实例。
+ * CDP 
  *
  * @param {{
  *   handleApiRequest: (pathname: string, method: string, data: Record<string, any>) => Promise<{ status: number, contentType?: string, headers?: Record<string, string>, body: string }>,
@@ -714,10 +773,6 @@ export function createWindowBridgeController(options) {
     onVersionDrift = null,
     leaseFilePath = '',
     autoConfigureIdeArgv = options?.env === undefined && options?.homeDir === undefined,
-    launcherExecFileFn = null,
-    launcherFsOps = null,
-    allowDesktopLauncherInTest = false,
-    existsHostFn = existsSync,
     WebSocketImpl = globalThis.WebSocket,
   } = options || {};
 
@@ -744,36 +799,10 @@ export function createWindowBridgeController(options) {
   let hadInjectedChatFrames = false;
   let cdpFallbackActive = false;
   let ideArgvProvisioned = false;
-  let hostLauncherPromise = null;
-  let argvUpdatedThisBoot = false;
-  let argvConfigured = false;
-  let launcherConfigured = false;
-  const hostExecInfo = resolveDesktopHostExecutable({
-    env,
-    platform,
-    homeDir,
-    existsFn: existsHostFn,
-  });
-  // Windows / macOS 支持从运行中宿主进程动态反查任意盘符路径，因此桌面端环境下即使自定义安装路径不在默认盘符也可一键重拉
-  const canRelaunch = Boolean(
-    hostExecInfo.found ||
-      ((platform === 'win32' || platform === 'darwin') && options?.existsHostFn === undefined)
-  );
-  let lastPersistedLeaseSig = '';
-  let lastBridgeStatus = {
-    state: 'pending',
-    enabled: true,
-    aliveCount: 0,
-    targets: 0,
-    argvUpdatedThisBoot: false,
-    argvConfigured: false,
-    launcherConfigured: false,
-    canRelaunch,
-    updatedAtMs: 0,
-  };
+  let desktopShortcutProvisioned = false;
+  let lastDesktopShortcutHealMs = 0;
   let hadContextWindows = false;
   let contextWindowBootId = `${process.pid}:${Date.now()}`;
-  let cachedBackendCtxModels = { expiresAt: 0, models: [] };
   let nodeDepsPromise = null;
   const allowedDynamicOrigins = new Set();
 
@@ -861,8 +890,8 @@ export function createWindowBridgeController(options) {
       }
 
       const srv = http.createServer((req, res) => {
-        // 注意：主窗口为 https://127.0.0.1，桥接为 http://127.0.0.1，跨协议请求在 Chromium 中必然携带
-        // Sec-Fetch-Site: cross-site；此处通过严格 Origin 白名单 + Host 校验 + 256-bit 随机令牌保障回环安全。
+ // https://127.0.0.1 http://127.0.0.1 Chromium 
+ // Sec-Fetch-Site: cross-site Origin + Host + 256-bit 
         const origin = String(req.headers.origin || '').trim();
         if (!isAllowedBridgeOrigin(origin) && !allowedDynamicOrigins.has(origin)) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -1044,18 +1073,7 @@ export function createWindowBridgeController(options) {
           ports.push(port);
         }
       } catch {
-        // 忽略不可读候选文件
-      }
-    }
-    const rawExplicitPorts = String(env?.ANTIGRAVITY_DEVTOOLS_PORT || '').trim();
-    if (rawExplicitPorts) {
-      for (const token of rawExplicitPorts.split(/[\s,]+/)) {
-        if (!/^\d+$/.test(token)) continue;
-        const p = Number(token);
-        if (Number.isInteger(p) && p > 0 && p <= 65535 && !seen.has(p)) {
-          seen.add(p);
-          ports.push(p);
-        }
+ // 
       }
     }
     return ports;
@@ -1175,7 +1193,7 @@ export function createWindowBridgeController(options) {
               resolve(msg);
             }
           } catch {
-            // 忽略无关事件帧
+ // 
           }
         };
 
@@ -1194,74 +1212,10 @@ export function createWindowBridgeController(options) {
         try {
           ws.close();
         } catch {
-          // 忽略关闭异常
+ // 
         }
       }
     }
-  }
-
-  function updateBridgeStatus(nextState, { enabled = true, aliveCount = 0, targets = 0, leasedBySelf = false, bundleVersion = '', prevLease = null } = {}) {
-    lastBridgeStatus = {
-      state: nextState,
-      enabled: Boolean(enabled),
-      aliveCount: Number(aliveCount || 0),
-      targets: Number(targets || 0),
-      argvUpdatedThisBoot: Boolean(argvUpdatedThisBoot),
-      argvConfigured: Boolean(argvConfigured || launcherConfigured),
-      launcherConfigured: Boolean(launcherConfigured || argvConfigured),
-      canRelaunch: Boolean(canRelaunch),
-      updatedAtMs: Date.now(),
-    };
-    if (leasedBySelf && leaseFilePath) {
-      const sig = `${nextState}:${lastBridgeStatus.aliveCount}:${lastBridgeStatus.targets}:${lastBridgeStatus.argvUpdatedThisBoot ? 1 : 0}:${lastBridgeStatus.launcherConfigured ? 1 : 0}:${lastBridgeStatus.canRelaunch ? 1 : 0}`;
-      if (sig !== lastPersistedLeaseSig) {
-        lastPersistedLeaseSig = sig;
-        saveJson(leaseFilePath, {
-          pid: process.pid,
-          bundleVersion,
-          bridgePort: bridgePort > 0 ? bridgePort : Number(prevLease?.bridgePort || 0) || undefined,
-          bridgeToken: bridgeToken || String(prevLease?.bridgeToken || '') || undefined,
-          syncState: lastBridgeStatus.state,
-          aliveCount: lastBridgeStatus.aliveCount,
-          targets: lastBridgeStatus.targets,
-          argvUpdatedThisBoot: lastBridgeStatus.argvUpdatedThisBoot,
-          argvConfigured: lastBridgeStatus.argvConfigured,
-          launcherConfigured: lastBridgeStatus.launcherConfigured,
-          canRelaunch: lastBridgeStatus.canRelaunch,
-          updatedAtMs: Date.now(),
-        });
-      }
-    }
-  }
-
-  function provisionHostLaunchersOnce() {
-    if (ideArgvProvisioned) return Promise.resolve();
-    if (hostLauncherPromise) return hostLauncherPromise;
-    hostLauncherPromise = (async () => {
-      const ideRes = ensureIdeRemoteDebuggingArgv({ env, homeDir, enabled: true });
-      const desktopRes = await ensureDesktopLaunchEntriesConfigured({
-        enabled: true,
-        env,
-        platform,
-        homeDir,
-        execFileFn: launcherExecFileFn,
-        fsOps: launcherFsOps,
-        allowInTest: allowDesktopLauncherInTest,
-      });
-      if (ideRes.updated || desktopRes.updated) {
-        argvUpdatedThisBoot = true;
-      }
-      if (ideRes.updated || ideRes.alreadyConfigured) {
-        argvConfigured = true;
-      }
-      if (desktopRes.updated || desktopRes.alreadyConfigured || desktopRes.configured) {
-        launcherConfigured = true;
-      }
-      ideArgvProvisioned = true;
-    })().finally(() => {
-      hostLauncherPromise = null;
-    });
-    return hostLauncherPromise;
   }
 
   async function runSyncInternal({ forceReinject = false } = {}) {
@@ -1280,16 +1234,20 @@ export function createWindowBridgeController(options) {
     const enabled = Boolean(curSettings.enableWindowOverlay !== false && mountMode !== 'sidebar');
     const contextWindows = curSettings.modelContextWindows || {};
     const hasContextWindows = Object.keys(contextWindows).length > 0;
-    const provPending =
-      (enabled || hasContextWindows) && autoConfigureIdeArgv && !ideArgvProvisioned
-        ? provisionHostLaunchersOnce()
-        : hostLauncherPromise;
+    if ((enabled || hasContextWindows) && autoConfigureIdeArgv && !ideArgvProvisioned) {
+      const prov = ensureIdeRemoteDebuggingArgv({ env, homeDir, enabled: true });
+      if (prov.updated || prov.alreadyConfigured || prov.reason === 'ide_dir_missing') {
+        ideArgvProvisioned = true;
+      }
+    }
+    if ((enabled || hasContextWindows) && autoConfigureIdeArgv && platform === 'win32' && !desktopShortcutProvisioned) {
+      desktopShortcutProvisioned = true;
+      lastDesktopShortcutHealMs = Date.now();
+      void ensureDesktopRemoteDebuggingShortcuts({ env, platform, homeDir, enabled: true });
+    }
 
-    let leasedBySelf = false;
-    let currentLease = null;
     if ((enabled || hasContextWindows) && leaseFilePath && !forceReinject) {
       const lease = loadJson(leaseFilePath, null);
-      currentLease = lease;
       const leasePid = Number(lease?.pid || 0);
       const leaseAgeMs = Date.now() - Number(lease?.updatedAtMs || 0);
       if (leasePid > 0 && leasePid !== process.pid && leaseAgeMs >= 0 && leaseAgeMs < 9000 && isPidAlive(leasePid)) {
@@ -1300,125 +1258,44 @@ export function createWindowBridgeController(options) {
           return { ok: false, enabled: true, reason: 'older_than_leader', injected: 0 };
         }
         if (leaseVerNum === myVerNum || String(lease?.bundleVersion || '') === bundleVersion) {
-          const mergedConfigured = Boolean(
-            lease?.launcherConfigured || lease?.argvConfigured || launcherConfigured || argvConfigured
-          );
-          lastBridgeStatus = {
-            state: String(lease?.syncState || 'active'),
-            enabled: Boolean(enabled),
-            aliveCount: Number(lease?.aliveCount || 0),
-            targets: Number(lease?.targets || 0),
-            argvUpdatedThisBoot: Boolean(lease?.argvUpdatedThisBoot || argvUpdatedThisBoot),
-            argvConfigured: mergedConfigured,
-            launcherConfigured: mergedConfigured,
-            canRelaunch: Boolean(lease?.canRelaunch ?? canRelaunch),
-            updatedAtMs: Date.now(),
-          };
           return { ok: true, enabled: true, reason: 'follower_yield', leaderPid: leasePid, injected: 0 };
         }
       }
-      leasedBySelf = true;
-      lastPersistedLeaseSig = '';
       saveJson(leaseFilePath, {
         pid: process.pid,
         bundleVersion,
         bridgePort: bridgePort > 0 ? bridgePort : Number(lease?.bridgePort || 0) || undefined,
         bridgeToken: bridgeToken || String(lease?.bridgeToken || '') || undefined,
-        syncState: lastBridgeStatus.state,
-        aliveCount: lastBridgeStatus.aliveCount,
-        targets: lastBridgeStatus.targets,
-        argvUpdatedThisBoot: Boolean(argvUpdatedThisBoot),
-        argvConfigured: Boolean(argvConfigured || launcherConfigured),
-        launcherConfigured: Boolean(launcherConfigured || argvConfigured),
-        canRelaunch: Boolean(canRelaunch),
         updatedAtMs: Date.now(),
       });
     }
 
     const cdpPorts = findActiveDevToolsPorts();
     if (!cdpPorts.length) {
-      if (provPending) {
-        await provPending.catch(() => {});
+      if ((enabled || hasContextWindows) && autoConfigureIdeArgv && platform === 'win32') {
+        const nowMs = Date.now();
+        if (nowMs - lastDesktopShortcutHealMs >= 60_000) {
+          lastDesktopShortcutHealMs = nowMs;
+          void ensureDesktopRemoteDebuggingShortcuts({ env, platform, homeDir, enabled: true });
+        }
       }
-      updateBridgeStatus(enabled || hasContextWindows ? 'no_devtools_port' : 'disabled', {
-        enabled,
-        leasedBySelf,
-        bundleVersion,
-        prevLease: currentLease,
-      });
       return { ok: false, enabled, reason: 'no_devtools_port', injected: 0 };
     }
 
     const { reachableCount, targets } = await collectAllMainWindowTargets(cdpPorts);
     if (reachableCount === 0) {
-      if (provPending) {
-        await provPending.catch(() => {});
-      }
-      updateBridgeStatus(enabled || hasContextWindows ? 'cdp_unreachable' : 'disabled', {
-        enabled,
-        leasedBySelf,
-        bundleVersion,
-        prevLease: currentLease,
-      });
       return { ok: false, enabled, reason: 'cdp_unreachable', injected: 0 };
     }
     if (!targets.length) {
-      updateBridgeStatus(enabled ? 'no_targets' : 'disabled', {
-        enabled,
-        leasedBySelf,
-        bundleVersion,
-        prevLease: currentLease,
-      });
       return { ok: true, enabled, reason: 'no_targets', injected: 0 };
-    }
-
-    if (hasContextWindows || hadContextWindows) {
-      let fallbackRules = {};
-      if (
-        hasContextWindows &&
-        lsRuntimeEndpoint.baseUrl &&
-        lsRuntimeEndpoint.addr !== 'test.invalid'
-      ) {
-        if (Date.now() >= cachedBackendCtxModels.expiresAt) {
-          try {
-            const [stRes, cat] = await Promise.all([
-              callLsRpc('GetUserStatus', {}, 1500),
-              getContextModelCatalog(),
-            ]);
-            const cfgs = stRes?.userStatus?.cascadeModelConfigData?.clientModelConfigs;
-            if (Array.isArray(cfgs)) {
-              cachedBackendCtxModels = {
-                expiresAt: Date.now() + 10_000,
-                models: getContextWindowModels(cfgs, cat),
-              };
-            }
-          } catch {
-            // 忽略瞬态 LS 查询失败，保留上次缓存或交由窗口端解析
-          }
-        }
-        if (cachedBackendCtxModels.models.length > 0) {
-          fallbackRules = resolveContextWindowRules(cachedBackendCtxModels.models, contextWindows);
-        }
-      }
-      const chatUrls = [
-        ...targets.filter((target) => !target.isIdeWorkbench).map((target) => target.webSocketDebuggerUrl),
-        ...collectAllChatDebuggerUrls(targets),
-      ];
-      const expression = createContextWindowSyncExpression(
-        contextWindows,
-        contextWindowBootId,
-        fallbackRules
-      );
-      await Promise.allSettled([...new Set(chatUrls)].map((url) => evaluateOnTarget(url, expression)));
-      hadContextWindows = hasContextWindows;
     }
 
     const disposeExpr = `(() => {
       try {
-        const existed = Boolean(${windowOverlayRef} || ${windowBridgeRef});
-        ${windowOverlayRef}?.[${overlayMethods.dispose}]?.();
-        delete ${windowOverlayRef};
-        delete ${windowBridgeRef};
+        const existed = Boolean(window.__AGUsageMonitorOverlay || window.__AGUsageMonitorBridge);
+        window.__AGUsageMonitorOverlay?.dispose?.();
+        delete window.__AGUsageMonitorOverlay;
+        delete window.__AGUsageMonitorBridge;
         return existed;
       } catch {
         return false;
@@ -1437,13 +1314,6 @@ export function createWindowBridgeController(options) {
 
     if (!enabled) {
       if (!hadInjectedTargets && !hadInjectedChatFrames && !forceReinject) {
-        updateBridgeStatus('disabled', {
-          enabled: false,
-          targets: targets.length,
-          leasedBySelf,
-          bundleVersion,
-          prevLease: currentLease,
-        });
         return { ok: true, enabled: false, removed: 0 };
       }
       let removed = 0;
@@ -1456,24 +1326,17 @@ export function createWindowBridgeController(options) {
       }
       hadInjectedTargets = false;
       hadInjectedChatFrames = false;
-      updateBridgeStatus('disabled', {
-        enabled: false,
-        targets: targets.length,
-        leasedBySelf,
-        bundleVersion,
-        prevLease: currentLease,
-      });
       return { ok: true, enabled: false, removed };
     }
 
     const { port, token } = await ensureBridgeServer();
     const probeExpr = `(() => {
       try {
-        const ov = ${windowOverlayRef};
-        const br = ${windowBridgeRef};
-        const alive = Boolean(ov && typeof ov[${overlayMethods.ensureAlive}] === 'function' && ov[${overlayMethods.ensureAlive}]());
-        const dockKind = String(ov?.[${overlayMethods.getDockKind}]?.() || '');
-        const clientMountMode = String(ov?.[${overlayMethods.getMountMode}]?.() || '');
+        const ov = window.__AGUsageMonitorOverlay;
+        const br = window.__AGUsageMonitorBridge;
+        const alive = Boolean(ov && typeof ov.ensureAlive === 'function' && ov.ensureAlive());
+        const dockKind = String(ov?.getDockKind?.() || '');
+        const clientMountMode = String(ov?.getMountMode?.() || '');
         const visible = Boolean(
           (window.innerWidth === undefined || Number(window.innerWidth) > 80) &&
           (window.innerHeight === undefined || Number(window.innerHeight) > 80) &&
@@ -1505,7 +1368,7 @@ export function createWindowBridgeController(options) {
           bridgePort: Number(br?.port || 0),
           hasToken: Boolean(br?.token),
           transportMode: String(br?.transportMode || 'http'),
-          hostRouteCascadeId: String(br?.[${windowBridgeRouteKey}] || ''),
+          hostRouteCascadeId: String(br?.hostRouteCascadeId || ''),
           routeCascadeId,
           rpcBatch,
         };
@@ -1543,16 +1406,12 @@ export function createWindowBridgeController(options) {
           }
           if (snap.bundleVersion === bundleVersion) {
             if (snap.bridgePort !== port || snap.hasToken !== true) {
-              const rebindExpr = `${windowOverlayRef}?.[${overlayMethods.updateBridge}]?.(${JSON.stringify({ port, token })})`;
+              const rebindExpr = `window.__AGUsageMonitorOverlay?.updateBridge?.(${JSON.stringify({ port, token })})`;
               await evaluateOnTarget(wsUrl, rebindExpr);
             }
             let effectiveDockKind = String(snap.dockKind || '');
             if (snap.clientMountMode && snap.clientMountMode !== mountMode) {
-              const modeSyncExpr = `(() => {
-                const overlay = ${windowOverlayRef};
-                overlay?.[${overlayMethods.applyMountMode}]?.(${JSON.stringify(mountMode)});
-                return String(overlay?.[${overlayMethods.getDockKind}]?.() || '');
-              })()`;
+              const modeSyncExpr = `(() => { window.__AGUsageMonitorOverlay?.applyMountMode?.(${JSON.stringify(mountMode)}); return String(window.__AGUsageMonitorOverlay?.getDockKind?.() || ''); })()`;
               const modeRes = await evaluateOnTarget(wsUrl, modeSyncExpr);
               if (typeof modeRes?.result?.result?.value === 'string') {
                 effectiveDockKind = modeRes.result.result.value;
@@ -1563,11 +1422,7 @@ export function createWindowBridgeController(options) {
               ideRouteId &&
               String(snap.hostRouteCascadeId || '') !== ideRouteId
             ) {
-              const routeSyncExpr = `(() => {
-                const bridge = ${windowBridgeRef};
-                if (bridge) bridge[${windowBridgeRouteKey}] = ${JSON.stringify(ideRouteId)};
-                ${windowOverlayRef}?.[${overlayMethods.syncHostRoute}]?.();
-              })()`;
+              const routeSyncExpr = `(() => { if (window.__AGUsageMonitorBridge) { window.__AGUsageMonitorBridge.hostRouteCascadeId = ${JSON.stringify(ideRouteId)}; } window.__AGUsageMonitorOverlay?.syncHostRoute?.(); })()`;
               await evaluateOnTarget(wsUrl, routeSyncExpr);
             }
             aliveCount += 1;
@@ -1583,7 +1438,7 @@ export function createWindowBridgeController(options) {
               sawCdpTransport = true;
               const rpcResults = await executeRpcBatch(snap.rpcBatch);
               relayedRpcCount += rpcResults.length;
-              const deliverExpr = `${windowOverlayRef}?.[${overlayMethods.deliverRpc}]?.(${JSON.stringify(rpcResults)})`;
+              const deliverExpr = `window.__AGUsageMonitorOverlay?.deliverRpc?.(${JSON.stringify(rpcResults)})`;
               await evaluateOnTarget(wsUrl, deliverExpr);
             }
             return {
@@ -1617,34 +1472,20 @@ export function createWindowBridgeController(options) {
           initialTelemetry = JSON.parse(initOut.body);
         }
       } catch {
-        // 预取首帧遥测异常不阻塞注入本身
+ // 
       }
 
       const bridgeConfigJson = JSON.stringify({
         port,
         token,
         bundleVersion,
-        platform: String(platform || ''),
         mountMode,
-        [WINDOW_BRIDGE_ROUTE_KEY]: ideRouteId || '',
+        hostRouteCascadeId: ideRouteId || '',
         isIdeChatFrame: Boolean(isIdeChatFrame),
         stylesCss: cachedAssets.stylesCss,
         initialTelemetry,
       });
-      const injectionScript = `(() => {
-        ${windowBridgeRef} = ${bridgeConfigJson};
-      })();
-      ${cachedAssets.appJs}
-      (() => {
-        const ov = ${windowOverlayRef};
-        const alive = Boolean(ov?.[${overlayMethods.ensureAlive}]?.());
-        const visible = Boolean(
-          (window.innerWidth === undefined || Number(window.innerWidth) > 80) &&
-          (window.innerHeight === undefined || Number(window.innerHeight) > 80) &&
-          !(typeof document !== 'undefined' && document?.hidden === true)
-        );
-        return { alive, dockKind: String(ov?.[${overlayMethods.getDockKind}]?.() || ''), visible };
-      })();`;
+      const injectionScript = `(() => {\nwindow.__AGUsageMonitorBridge = ${bridgeConfigJson};\n})();\n${cachedAssets.appJs}\n(() => { const ov = window.__AGUsageMonitorOverlay; const alive = Boolean(ov && ov.ensureAlive && ov.ensureAlive()); return { alive, dockKind: String(ov?.getDockKind?.() || ''), visible: Boolean((window.innerWidth === undefined || Number(window.innerWidth) > 80) && (window.innerHeight === undefined || Number(window.innerHeight) > 80) && !(typeof document !== 'undefined' && document?.hidden === true)) }; })();`;
 
       const evalRes = await evaluateOnTarget(wsUrl, injectionScript);
       const evalVal = evalRes?.result?.result?.value;
@@ -1691,7 +1532,7 @@ export function createWindowBridgeController(options) {
                 chatComposerActive = true;
               }
             } catch {
-              // 单个聊天子视图异常不阻断主窗口兜底
+ // 
             }
           }
           if (chatComposerActive) {
@@ -1704,19 +1545,11 @@ export function createWindowBridgeController(options) {
 
         await syncSingleTarget(target);
       } catch {
-        // 单个窗口注入异常不阻断其他窗口
+ // 
       }
     }
 
     cdpFallbackActive = sawCdpTransport;
-    updateBridgeStatus(aliveCount > 0 ? 'active' : 'no_targets', {
-      enabled: true,
-      aliveCount,
-      targets: targets.length,
-      leasedBySelf,
-      bundleVersion,
-      prevLease: currentLease,
-    });
     return {
       ok: true,
       enabled: true,
@@ -1799,17 +1632,7 @@ export function createWindowBridgeController(options) {
           const { targets } = await collectAllMainWindowTargets(cdpPorts).catch(() => ({
             targets: [],
           }));
-          const disposeExpr = `(() => {
-            try {
-              ${windowContextWindowsRef}?.dispose?.();
-              ${windowOverlayRef}?.[${overlayMethods.dispose}]?.();
-              delete ${windowOverlayRef};
-              delete ${windowBridgeRef};
-              return true;
-            } catch {
-              return false;
-            }
-          })()`;
+          const disposeExpr = `(() => { try { window.__AGUsageMonitorOverlay?.dispose?.(); delete window.__AGUsageMonitorOverlay; delete window.__AGUsageMonitorBridge; return true; } catch { return false; } })()`;
           const allUrls = [
             ...targets.map((t) => String(t.webSocketDebuggerUrl || '')).filter(Boolean),
             ...collectAllChatDebuggerUrls(targets),
@@ -1838,45 +1661,9 @@ export function createWindowBridgeController(options) {
     if (!enabled) {
       hadInjectedTargets = true;
       hadInjectedChatFrames = true;
-      const cur = getSettingsFn() || {};
-      const hasCtx = Object.keys(cur.modelContextWindows || {}).length > 0;
-      if (!hasCtx && autoConfigureIdeArgv) {
-        launcherConfigured = false;
-        void ensureDesktopLaunchEntriesConfigured({
-          enabled: false,
-          env,
-          platform,
-          homeDir,
-          execFileFn: launcherExecFileFn,
-          fsOps: launcherFsOps,
-          allowInTest: allowDesktopLauncherInTest,
-        }).catch(() => {});
-      }
     } else {
       ideArgvProvisioned = false;
       hadInjectedChatFrames = true;
-    }
-    return syncAllWindows({ forceReinject: false }).catch(() => ({ ok: false }));
-  }
-
-  function notifyContextWindowsChanged() {
-    const cur = getSettingsFn() || {};
-    const mountMode = normalizeWindowMountMode(cur.windowMountMode, cur.enableWindowOverlay);
-    const overlayOn = Boolean(cur.enableWindowOverlay !== false && mountMode !== 'sidebar');
-    const hasCtx = Object.keys(cur.modelContextWindows || {}).length > 0;
-    if (hasCtx) {
-      ideArgvProvisioned = false;
-    } else if (!overlayOn && autoConfigureIdeArgv) {
-      launcherConfigured = false;
-      void ensureDesktopLaunchEntriesConfigured({
-        enabled: false,
-        env,
-        platform,
-        homeDir,
-        execFileFn: launcherExecFileFn,
-        fsOps: launcherFsOps,
-        allowInTest: allowDesktopLauncherInTest,
-      }).catch(() => {});
     }
     return syncAllWindows({ forceReinject: false }).catch(() => ({ ok: false }));
   }
@@ -1885,38 +1672,16 @@ export function createWindowBridgeController(options) {
     ensureBridgeServer,
     syncAllWindows,
     notifySettingChanged,
-    notifyContextWindowsChanged,
     start,
     stop,
     getBridgeInfo: () => ({ port: bridgePort, token: bridgeToken, running: Boolean(server) }),
-    getBridgeStatus: () => ({ ...lastBridgeStatus }),
   };
 }
 
 let defaultBridgeController = null;
 
 /**
- * 读取进程级默认双栖桥接器的最新同步健康度快照（供 `/api/telemetry` 与偏好设置面板诊断使用）。
- */
-export function getDefaultWindowBridgeStatus() {
-  if (!defaultBridgeController) {
-    return {
-      state: 'pending',
-      enabled: true,
-      aliveCount: 0,
-      targets: 0,
-      argvUpdatedThisBoot: false,
-      argvConfigured: false,
-      launcherConfigured: false,
-      canRelaunch: false,
-      updatedAtMs: 0,
-    };
-  }
-  return defaultBridgeController.getBridgeStatus();
-}
-
-/**
- * 启动进程级默认的双栖窗口桥接控制器（幂等）。
+ * 
  *
  * @param {Parameters<typeof createWindowBridgeController>[0]} options
  */
@@ -1932,7 +1697,7 @@ export function startDefaultWindowBridge(options) {
 }
 
 /**
- * 在用户保存设置切换 `enableWindowOverlay` 时立即同步所有打开的主窗口挂载状态。
+ * `enableWindowOverlay` 
  *
  * @param {boolean} enabled
  */
@@ -1942,6 +1707,5 @@ export function notifyWindowOverlaySetting(enabled) {
 }
 
 export function notifyModelContextWindowsChanged() {
-  if (!defaultBridgeController) return Promise.resolve({ ok: false });
-  return defaultBridgeController.notifyContextWindowsChanged();
+  return defaultBridgeController?.syncAllWindows().catch(() => {});
 }

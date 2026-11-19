@@ -1,5 +1,5 @@
 /**
- * @fileoverview Top Long-Pill Navigation Bar (顶部唯一长药丸功能分割栏).
+ * @fileoverview Top Long-Pill Navigation Bar ( ).
  * Splits the application into focused single-viewport views and animates
  * the active glider using GPU-accelerated translate3d.
  */
@@ -17,7 +17,7 @@ export const TopLongPillNav = defineComponent({
       {
         className: 'long-pill-nav',
         role: 'tablist',
-        'aria-label': '主功能视图分割导航',
+        'aria-label': 'Main view navigation',
       },
       [glider]
     );
@@ -90,14 +90,12 @@ export const TopLongPillNav = defineComponent({
         }
 
         patchText(entry.labelEl, item.label);
-        const hasBadge = item.badge !== undefined && item.badge !== null && item.badge !== '';
-        if (hasBadge) {
+        if (item.badge !== undefined && item.badge !== null && item.badge !== '') {
           patchAttr(entry.badgeEl, 'hidden', false);
           patchText(entry.badgeEl, `(${item.badge})`);
         } else {
           patchAttr(entry.badgeEl, 'hidden', true);
         }
-        patchAttr(entry.btn, 'title', hasBadge ? `${item.label} (${item.badge})` : item.label);
 
         const isActive = item.value === modelValue;
         patchClasses(entry.btn, { 'is-active': isActive });

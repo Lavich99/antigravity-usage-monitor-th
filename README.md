@@ -2,28 +2,18 @@
 
 <img src="assets/logo.svg" alt="Antigravity Usage & Speed Monitor Logo" width="84" />
 
-# Antigravity Usage & Speed Monitor
+# Antigravity Usage & Speed Monitor (Thai Hard Fork)
 
-Local usage, speed, context, and quota monitor for Google Antigravity 2.0, Antigravity IDE, and Antigravity CLI, with no external npm dependencies.
+> Thai-localized, offline-safe hard fork of [`yuhuan-dev/antigravity-usage-monitor`](https://github.com/yuhuan-dev/antigravity-usage-monitor) for Google Antigravity 2.0, Antigravity IDE, and Antigravity CLI, with zero external npm dependencies.
 
-[![Release](https://img.shields.io/github/v/release/yuhuan-dev/antigravity-usage-monitor?style=flat-square&color=2A5E76&label=release)](https://github.com/yuhuan-dev/antigravity-usage-monitor/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/yuhuan-dev/antigravity-usage-monitor/total?style=flat-square&color=0ea5e9)](https://github.com/yuhuan-dev/antigravity-usage-monitor/releases)
-[![Stars](https://img.shields.io/github/stars/yuhuan-dev/antigravity-usage-monitor?style=flat-square&color=f59e0b)](https://github.com/yuhuan-dev/antigravity-usage-monitor/stargazers)
-[![License](https://img.shields.io/github/license/yuhuan-dev/antigravity-usage-monitor?style=flat-square&color=3b82f6)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Lavich99/antigravity-usage-monitor-th?style=flat-square&color=2A5E76&label=release)](https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Lavich99/antigravity-usage-monitor-th/total?style=flat-square&color=0ea5e9)](https://github.com/Lavich99/antigravity-usage-monitor-th/releases)
+[![Stars](https://img.shields.io/github/stars/Lavich99/antigravity-usage-monitor-th?style=flat-square&color=f59e0b)](https://github.com/Lavich99/antigravity-usage-monitor-th/stargazers)
+[![License](https://img.shields.io/github/license/Lavich99/antigravity-usage-monitor-th?style=flat-square&color=3b82f6)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20npm%20packages-10b981?style=flat-square)](#local-development)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-6366f1?style=flat-square)](#client-support)
 
-English · [简体中文](README.zh-CN.md)
-
-[Features](#features) · [Screenshots](#screenshots) · [Client Support](#client-support) · [Installation](#installation) · [Usage](#usage) · [Development](#local-development)
-
-<br />
-
-<img src="assets/preview.png" alt="Antigravity Usage Monitor Preview" width="100%" />
-
-<br />
-
-[Latest Release](https://github.com/yuhuan-dev/antigravity-usage-monitor/releases/latest) · [Download ZIP (`usage-monitor.zip`)](https://github.com/yuhuan-dev/antigravity-usage-monitor/releases/latest/download/usage-monitor.zip)
+[Features](#features) · [Client Support](#client-support) · [Installation](#installation) · [Usage](#usage) · [Development](#local-development)
 
 </div>
 
@@ -31,71 +21,15 @@ English · [简体中文](README.zh-CN.md)
 
 ## Features
 
-- **Live Metrics & Customizable Layout**: Tracks output speed (`tok/s`), time-to-first-token (`TTFT`), session average speed, step/session USD cost, cache hit rate, tightest remaining quota, and session tokens. You can choose and reorder the overview metric cards (4 shown by default out of 9 options) and section blocks.
+- **Live Metrics & Customizable Layout**: Tracks output speed (`tok/s`), time-to-first-token (`TTFT`), session average speed, step/session USD & THB (`฿`) cost, cache hit rate, tightest remaining quota, and session tokens. Choose and reorder overview metric cards and section blocks cleanly.
+- **Thai-First UX & Smooth 60fps Animations**: Defaults to Thai (`th-TH`), THB (`฿`) conversion, compact font scaling, 1–2 customizable Capsule slots (`Gemini 5h` & `Context` with 2-decimal precision), Composer dock with Permission moved left, smooth `easeInOutCubic` 60fps transitions, and a GPU-composited spinning colored Context ring while the AI is actively running.
 - **10-Category Context Breakdown**: Shows the token breakdown of the latest request across assistant replies, tool results, user messages, subagent notifications, checkpoints, system prompts, system tools, MCP tools, skills, and user rules, with a switcher between the main agent and spawned subagents.
-- **Quota Pool Tracking**: Reads 5-hour and weekly quotas, reset timers, and cycle consumption across `Gemini`, `Gemini 4 Argon`, `Gemini 4 Carbon`, and `Claude & GPT` pools, preserving cached pool status with a stale badge when upstream quota data is temporarily unavailable.
+- **Quota Pool Tracking**: Dynamically reads 5-hour and weekly quotas, reset timers, and cycle consumption across `Gemini`, `Gemini 4 Argon`, `Gemini 4 Carbon`, `Claude & GPT`, and future pools, preserving cached pool status with a stale badge when upstream quota data is temporarily unavailable.
 - **Main Agent, Subagents & Multi-Session Views**: Merges main agent and subagent steps in chronological order (or filters by individual agent), renders optional turn rails, expands running subagent tasks inline, and provides a recent-conversation selector in the header.
 - **Call Details & Custom Token Formats**: Includes **By Step** and **By Model** tabs (with multi-model throughput charts). Supports 2–14 configurable columns, optional speed color grading, preset `Ctx / Think / Reply` and `In / Out / Cache` columns, and custom token combination strings such as `context:new:cache` or `in:out:cache`.
 - **Historical Usage & Breakdowns**: Summarizes tokens, uncached input vs. cache-read savings, thinking/output split, hourly/daily trend curves, model rankings, client attribution (`Desktop App` / `IDE` / `CLI`), and monthly bar charts across `Today`, `1d`, `7d`, `14d`, `30d`, `All`, or custom date/time ranges.
-- **Multi-Client Capsules & Hover Popover**: Integrates as a titlebar or composer capsule and auxiliary sidebar in Antigravity 2.0, a titlebar/composer capsule in Antigravity IDE, a single-line 24-bit ANSI `statusLine` in Antigravity CLI (`agy`), and a standalone local web UI. Supports 1–5 customizable capsule slots, configurable hover cards, and `Auto Fit` or fixed (`440–1080 px`) popover widths.
-- **No `app.asar` Modification**: Titlebar/composer injection and context request hooks run in memory over local CDP (`DevToolsActivePort`). On Antigravity IDE, the only host file updated is adding `"remote-debugging-port": "0"` to `~/.antigravity-ide/argv.json`; installation binaries and `app.asar` are never altered.
-- **Per-Model Context Windows**: Sets context window limits per model series (across thinking levels) or follows host defaults under Settings. Desktop/IDE applies rules at runtime on outbound requests; CLI applies `AGY_CLI_AUTO_COMPACT_OVERRIDE`.
-- **Appearance, Offline Storage & Cloud Updates**: Supports `zh-CN` / `en-US` / host language, `sm / md / lg / xl` font scaling, 6 theme accents plus host matching, offline reading from CLI SQLite + WAL, `annotations/*.pbtxt`, `transcript.jsonl`, and `.deep_stats_cache.json`, GitHub [`pricing-catalog.json`](pricing-catalog.json) sync, in-panel release updates (`manual` / `auto` / `off`), and cache rebuild/settings reset tools.
-
----
-
-## Screenshots
-
-### IDE & CLI
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="assets/ide-preview.png" alt="Antigravity IDE Titlebar Capsule and Hover Overview" width="100%" />
-      <br />
-      <b>Antigravity IDE</b>
-      <br />
-      <sub>Titlebar capsule and hover popover showing step cost, context usage, and pool quotas</sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="assets/cli-preview.png" alt="Antigravity CLI Native statusLine Capsule" width="100%" />
-      <br />
-      <b>Antigravity CLI (<code>agy</code>)</b>
-      <br />
-      <sub>Single-line transparent 24-bit ANSI bottom <code>statusLine</code> with active count, TPS, TTFT, and context percentage</sub>
-    </td>
-  </tr>
-</table>
-
-### Panel Tabs
-
-<table>
-  <tr>
-    <td align="center" width="33.3%">
-      <img src="assets/context.png" alt="Live Overview and Quotas" />
-      <br />
-      <b>Live Overview</b>
-      <br />
-      <sub>TPS, TTFT, 10-category context bar, quota pools, and active tasks</sub>
-    </td>
-    <td align="center" width="33.3%">
-      <img src="assets/analytics.png" alt="Usage Statistics" />
-      <br />
-      <b>Usage Statistics</b>
-      <br />
-      <sub>Token totals, cache hit rate, trend chart, and model breakdown</sub>
-    </td>
-    <td align="center" width="33.3%">
-      <img src="assets/subagents.png" alt="Call Details and Subagents" />
-      <br />
-      <b>Call Details</b>
-      <br />
-      <sub>Step-by-step agent badge, model, speed, TTFT, tokens, and cost</sub>
-    </td>
-  </tr>
-</table>
+- **Multi-Client Capsules & Hover Popover**: Integrates as a titlebar or composer capsule (including Split View multi-pane support) and auxiliary sidebar in Antigravity 2.0, with multi-colored context ring segments, circular quota rings (`Left` / `Used`), and `Auto Fit` or fixed (`440–1080 px`) popover widths.
+- **Offline Security & Custom Model Pricing**: Runs strictly offline (no external GitHub sync/auto-updater, no credential readers, and no outbound request interception). Supports `th-TH` / `en-US` / host language and custom offline per-model USD/1M pricing for future models.
 
 ---
 
@@ -121,23 +55,23 @@ Keep the folder name as `usage-monitor`. **No `npm install` is needed.**
 
 ```powershell
 # Windows (PowerShell)
-git clone https://github.com/yuhuan-dev/antigravity-usage-monitor.git "$env:USERPROFILE\.gemini\config\plugins\usage-monitor"
+git clone https://github.com/Lavich99/antigravity-usage-monitor-th.git "$env:USERPROFILE\.gemini\config\plugins\usage-monitor"
 ```
 
 ```bash
 # macOS / Linux
-git clone https://github.com/yuhuan-dev/antigravity-usage-monitor.git ~/.gemini/config/plugins/usage-monitor
+git clone https://github.com/Lavich99/antigravity-usage-monitor-th.git ~/.gemini/config/plugins/usage-monitor
 ```
 
 Or ask Antigravity directly:
 
 ```text
-Clone https://github.com/yuhuan-dev/antigravity-usage-monitor to ~/.gemini/config/plugins/usage-monitor and enable the plugin
+Clone https://github.com/Lavich99/antigravity-usage-monitor-th to ~/.gemini/config/plugins/usage-monitor and enable the plugin
 ```
 
 ### Option 2: Release ZIP
 
-Download [`usage-monitor.zip`](https://github.com/yuhuan-dev/antigravity-usage-monitor/releases/latest/download/usage-monitor.zip) and extract it into `~/.gemini/config/plugins/` so the directory path is `~/.gemini/config/plugins/usage-monitor`.
+Download [`usage-monitor.zip`](https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest/download/usage-monitor.zip) and extract it into `~/.gemini/config/plugins/` so the directory path is `~/.gemini/config/plugins/usage-monitor`.
 
 <details>
 <summary>Windows PowerShell command for ZIP installation</summary>
@@ -145,7 +79,7 @@ Download [`usage-monitor.zip`](https://github.com/yuhuan-dev/antigravity-usage-m
 ```powershell
 $pluginsDir = "$env:USERPROFILE\.gemini\config\plugins"
 New-Item -ItemType Directory -Path $pluginsDir -Force | Out-Null
-Invoke-WebRequest -Uri "https://github.com/yuhuan-dev/antigravity-usage-monitor/releases/latest/download/usage-monitor.zip" -OutFile "$env:TEMP\usage-monitor.zip"
+Invoke-WebRequest -Uri "https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest/download/usage-monitor.zip" -OutFile "$env:TEMP\usage-monitor.zip"
 Expand-Archive -Path "$env:TEMP\usage-monitor.zip" -DestinationPath $pluginsDir -Force
 ```
 
@@ -190,9 +124,9 @@ ssh -L 8787:127.0.0.1:8787 user@your-server
 <details>
 <summary>UI options: mount mode, capsule slots, token formats, model IDs, and context limits</summary>
 
-- **Mount Mode & Width**: Switch between **Dual-mount (Top Bar + Sidebar)**, **Composer**, and **Sidebar only**. Popover width defaults to **Auto Fit** (expands within window bounds for wide tables) or a fixed width (`440–1080 px`).
-- **Capsule Slots**: Choose 1–5 metric slots and reorder them (default: Output Speed, TTFT, Context Usage), plus an optional toggle for the active-session indicator.
-- **Call Details Table & Token Format**: Toggle agent badges, turn rail (off by default), and speed color grading (off by default). Choose `Ctx / Think / Reply`, `In / Out / Cache` (with per-item USD tooltips), or custom format strings like `context:new:cache` or `in:out:cache`.
+- **Mount Mode & Width**: Defaults to **Composer** mount with **Move Permission Left** enabled (`Auto Fit` popover or custom `440–1080 px`, default `550 px`). Switch anytime between **Dual-mount**, **Composer**, and **Sidebar only**.
+- **Capsule Slots**: Choose **1–2** metric slots and reorder/swap or toggle them (default: **Gemini 5h** & **Context Usage**, 2-decimal precision, spinning colored Context ring while running).
+- **Call Details Table & Token Format**: Defaults to agent badges, turn rail, and speed color grading enabled with columns `Step`, `Model`, `TPS`, `Ctx / Think / Reply`, `Cache`, and `Cost`, plus custom format strings like `context:new:cache` or `in:out:cache`.
 - **Model Name Format**: Choose **Compact short alias** (`argon-4-high`), **Full raw ID**, or **Trimmed raw ID** (strips `gemini-` / `claude-` / `gpt-` prefixes while keeping `·compact` suffixes intact). Orchestrator series IDs have a separate setting.
 - **Per-Model Context Limits**: Configure limits per model across thinking levels or follow host defaults under **Preferences → Other → Model Context Settings**. App/IDE applies saved rules at startup; CLI sets `AGY_CLI_AUTO_COMPACT_OVERRIDE`.
 
@@ -210,7 +144,7 @@ ssh -L 8787:127.0.0.1:8787 user@your-server
 <details>
 <summary>Updating and data directory</summary>
 
-- **In-Panel Update**: When a new GitHub release is available, a version badge appears next to the capsule and in the panel header. Update mode (`Manual` / `Auto` / `Off`) and price catalog sync can be configured under **Preferences → Other**.
+- **Offline Updates**: External GitHub auto-update/network catalog sync is disabled in this edition for offline safety. Update anytime manually using `git pull` or ZIP extraction below.
 - **Manual Git Update**:
   - Windows: `git -C "$env:USERPROFILE\.gemini\config\plugins\usage-monitor" pull --ff-only`
   - macOS / Linux: `git -C ~/.gemini/config/plugins/usage-monitor pull --ff-only`
@@ -237,16 +171,17 @@ npm test
 
 ## Contributing & License
 
-Issues and pull requests are welcome. If you modify files under `sidecars/panel/src/`, please rebuild via `npm run build` and make sure `npm test` passes.
+Issues and pull requests are welcome. If you modify files under `sidecars/panel/src/`, please rebuild via `npm run build` and check the verification suites.
 
+Forked from [`yuhuan-dev/antigravity-usage-monitor`](https://github.com/yuhuan-dev/antigravity-usage-monitor).
 Licensed under the [GNU General Public License v3.0](LICENSE).
 
 ## Star History
 
-<a href="https://www.star-history.com/#yuhuan-dev/antigravity-usage-monitor&Date">
+<a href="https://www.star-history.com/#Lavich99/antigravity-usage-monitor-th&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yuhuan-dev/antigravity-usage-monitor&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yuhuan-dev/antigravity-usage-monitor&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yuhuan-dev/antigravity-usage-monitor&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Lavich99/antigravity-usage-monitor-th&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Lavich99/antigravity-usage-monitor-th&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Lavich99/antigravity-usage-monitor-th&type=Date" />
   </picture>
 </a>

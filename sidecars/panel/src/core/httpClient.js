@@ -4,18 +4,17 @@
  * (Sidecar Webview `window.sidecar.fetch` + Main Window Loopback Bridge).
  */
 
-import { readInjectedWindowBridge } from '../../shared/window-bridge-protocol.mjs';
-
 const inFlightGets = new Map();
 const activeControllers = new Map();
 
 /**
- * 读取主窗口双栖模式下注入的本地桥接配置（`port`、`token`、`bundleVersion`、`stylesCss`）。
+ * `port` `token` `bundleVersion` `stylesCss` 
  *
  * @returns {{ port: number, token: string, bundleVersion?: string, stylesCss?: string } | null}
  */
 export function getWindowBridgeConfig() {
-  const br = readInjectedWindowBridge();
+  if (typeof window === 'undefined') return null;
+  const br = window.__AGUsageMonitorBridge;
   const port = Number(br?.port || 0);
   if (br && Number.isInteger(port) && port > 0 && typeof br.token === 'string' && br.token) {
     return br;
@@ -24,7 +23,7 @@ export function getWindowBridgeConfig() {
 }
 
 /**
- * 判断当前脚本是否以双栖悬浮模式运行在宿主主聊天窗口内（而非右侧辅助栏 Webview）。
+ * Webview 
  *
  * @returns {boolean}
  */
@@ -35,7 +34,7 @@ export function isWindowOverlayMode() {
 }
 
 /**
- * 接收 Sidecar 通过 CDP `Runtime.evaluate` 批量投递的 RPC 响应，完成因 CSP/代理解除 HTTP 直连时的兜底请求。
+ * Sidecar CDP `Runtime.evaluate` RPC CSP/ HTTP 
  *
  * @param {Array<{ id: string, ok: boolean, status?: number, data?: any, error?: string }>} responses
  * @returns {number}
@@ -193,7 +192,7 @@ export async function callSidecarApi(path, { method = 'GET', body, abortKey = ''
       if (signal?.aborted || cdpErr?.name === 'AbortError') {
         throw cdpErr;
       }
-      // 热更新或守护重启期间若 CDP 尚未轮询投递，自动重置回 HTTP 并用最新桥接端口重试一次
+      // CDP HTTP
       const latestBridge = getWindowBridgeConfig() || initialBridge;
       latestBridge.transportMode = 'http';
       return execHttpOnce(latestBridge);
@@ -214,7 +213,7 @@ export async function callSidecarApi(path, { method = 'GET', body, abortKey = ''
         throw fetchErr;
       }
       if (!bridge) {
-        // 辅助栏 Webview 在 Worker 热替换瞬间若有极短暂波动，延迟 180ms 自动无感重试一次
+        // Webview Worker 180ms
         if (upperMethod === 'GET') {
           await new Promise((r) => setTimeout(r, 180));
           if (!signal?.aborted) {
@@ -223,7 +222,7 @@ export async function callSidecarApi(path, { method = 'GET', body, abortKey = ''
         }
         throw fetchErr;
       }
-      // 当宿主环境的 CSP connect-src、混合内容策略或瞬态端口切换阻断直连时，切至带 HTTP 自愈恢复的 CDP 通道
+      // CSP connect-src HTTP CDP
       return fallbackViaCdpWithRecovery(bridge);
     }
   };

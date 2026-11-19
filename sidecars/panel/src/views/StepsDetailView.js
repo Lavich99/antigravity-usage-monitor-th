@@ -1,8 +1,8 @@
 /**
- * @fileoverview View 3: StepsDetailView (步骤明细与总汇总分析视图).
- * 提供“按步查看”与“总汇总”双子视图切换：
- * - 单步测速表通过 `stepColumnRegistry.js` 动态渲染用户自选的 2..12 个字段列，并支持行级增量对账；
- * - 总汇总视图提供会话线性走势图、多模型同图趋势拟合曲线与极简高密度模型总览卡片。
+ * @fileoverview View 3: StepsDetailView ( ).
+ * “ ” “ ” 
+ * - `stepColumnRegistry.js` 2..12 
+ * - 
  */
 
 import { defineComponent } from '../core/component.js';
@@ -260,7 +260,7 @@ export const StepsDetailView = defineComponent({
       },
     });
 
-    // --- 子视图 1：单步明细表（委托给可复用的 `StepTableWidget` 解耦组件） ---
+    // --- 1 `StepTableWidget` ---
     const stepTableWidget = StepTableWidget({
       onSelectAgentScopes: applyAgentScopesSelection,
     });
@@ -279,7 +279,7 @@ export const StepsDetailView = defineComponent({
       className: 'table-scroll-host',
     });
 
-    // --- 子视图 2：总汇总分析面板 ---
+    // --- 2 ---
     let selectedLineMetric = 'totalTokens';
     let selectedFitMetric = 'tps';
 
@@ -435,20 +435,17 @@ export const StepsDetailView = defineComponent({
     let isDirty = false;
 
     function resolveDefaultActiveModelKey(scopedConv, chronoSteps, models, availableModelKeys) {
-      if (scopedConv?.hasKnownModel !== false) {
-        const activeCand = getStepModelGroupKey({
-          baseModelLabel: scopedConv?.activeBaseModelLabel,
-          baseModelShort: scopedConv?.activeBaseModelShort,
-          modelLabel: scopedConv?.activeModelLabel,
-          modelShort: scopedConv?.activeModelShort,
-        });
-        if (
-          activeCand &&
-          activeCand !== t('fmt.unknownModel') &&
-          availableModelKeys.has(activeCand)
-        ) {
-          return activeCand;
-        }
+      const activeCand = getStepModelGroupKey({
+        modelLabel: scopedConv?.activeModelLabel,
+        modelShort: scopedConv?.activeModelShort,
+      });
+      if (
+        activeCand &&
+        activeCand !== 'Unknown Model' &&
+        activeCand !== t('fmt.unknownModel') &&
+        availableModelKeys.has(activeCand)
+      ) {
+        return activeCand;
       }
       for (let i = chronoSteps.length - 1; i >= 0; i--) {
         const st = chronoSteps[i];
@@ -628,7 +625,7 @@ export const StepsDetailView = defineComponent({
         if (!stepModelOptionMap.has(gk)) {
           const disp = resolveModelDisplayInfo(st, displaySettings, { fallback: gk });
           stepModelOptionMap.set(gk, {
-            label: disp.baseText || disp.text || gk,
+            label: disp.text.replace(/·Compact\s*$/iu, '').trim() || gk,
             calls: 0,
           });
         }
@@ -659,7 +656,7 @@ export const StepsDetailView = defineComponent({
         });
         perModelOptions.push({
           value: gk,
-          label: disp.baseText || disp.text || gk,
+          label: disp.text.replace(/·Compact\s*$/iu, '').trim() || gk,
           meta: t('header.convMetaSteps', { count: Number(m.calls || 0) }),
         });
       }
@@ -688,7 +685,7 @@ export const StepsDetailView = defineComponent({
         ...perModelOptions,
       ];
 
-      // 1. “按步查看”动态列头同步与表格行级增量对账
+      // 1. “ ”
       selectedTableModels = normalizeMultiModelSelection(
         selectedTableModels,
         availableModelKeys
@@ -744,13 +741,13 @@ export const StepsDetailView = defineComponent({
         stepsScroll.refresh();
       }
 
-      // 2. 顶部“会话走势”更新
+      // 2. “ ”
       selectedLineModels = normalizeMultiModelSelection(
         selectedLineModels,
         availableModelKeys
       );
 
-      // 3. 顶部“趋势拟合”模型锁定随当前会话与代理范围更新。
+      // 3. “ ”
       const defaultActiveModelKey = resolveDefaultActiveModelKey(
         activeModelSource,
         chronoSteps,
@@ -827,7 +824,7 @@ export const StepsDetailView = defineComponent({
       });
       patchText(fitSummaryBadge, fitRes.summaryBadge);
 
-      // 4. 极简模型总览列表增量对账
+      
       const displayModels = mergeModelsByDisplayName(models, displaySettings, { fallback: '—' });
       let sumCalls = 0;
       let sumTokens = 0;

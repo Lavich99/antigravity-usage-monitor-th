@@ -39,7 +39,7 @@ function estimateCtxPillWidth(text) {
 }
 
 /**
- * 10 通道上下文窗口构成定义（通过动态 getter 自动跟随当前激活语言）。
+ * 10 getter 
  */
 export const CTX_CHANNEL_DEFS = [
   {
@@ -309,16 +309,11 @@ export const ContextWindowWidget = defineComponent({
       if (interactiveInspector) {
         patchAttr(ctxInspectorBar, 'hidden', !hasSubagents);
         if (hasSubagents && ctxAgent) {
-          const activeBadgeText = formatAgentBadgeText({
-            agentKind:
-              aggregated?.activeAgentKind ||
-              (!aggregated?.activeAgentId || aggregated.activeAgentId === 'main'
-                ? 'main'
-                : 'subagent'),
-            agentOrdinal: Number(aggregated?.activeAgentOrdinal || 0),
-            isMain: !aggregated?.activeAgentId || aggregated.activeAgentId === 'main',
-            badgeText: aggregated?.activeAgentBadge,
-          });
+          const rawActiveBadge = aggregated?.activeAgentBadge || 'Main';
+          const activeBadgeText =
+            rawActiveBadge === 'Main'
+              ? t('fmt.mainBadge')
+              : rawActiveBadge.replace(/^Sub\s*(\d+)$/i, (_, n) => t('fmt.subBadge', { index: n }));
 
           const pillItems = [
             {

@@ -6,7 +6,6 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import { MockMutationObserver, createMockDom } from './mock-dom.mjs';
 import {
   associateIdeIframeRoutes,
   createWindowBridgeController,
@@ -20,16 +19,6 @@ import {
   resolveDevToolsPortCandidates,
   resolveIdeArgvPath,
 } from '../backend/window-bridge.mjs';
-import {
-  buildSanitizedDesktopRelaunchEnv,
-  buildWindowsRelaunchInnerScript,
-  ensureDesktopLaunchEntriesConfigured,
-  ensureRemoteDebugFlagInArgs,
-  patchLinuxDesktopEntryText,
-  patchWindowsRunRegistryCommand,
-  resolveDesktopHostExecutable,
-  triggerDesktopHostRelaunch,
-} from '../backend/desktop-launcher-config.mjs';
 import {
   discoverAntigravityLsEndpoint,
   parseLinuxProcNetTcpPorts,
@@ -82,7 +71,7 @@ test('DevToolsActivePort parsing, cross-platform discovery (2.0 + IDE), and stri
   assert.equal(winPaths[3], path.join('C:\\Local', 'Antigravity IDE', 'DevToolsActivePort'));
 
   const macPaths = resolveDevToolsPortCandidates({}, 'darwin', '/Users/dev');
-  assert.equal(macPaths.length, 6);
+  assert.equal(macPaths.length, 2);
   assert.equal(
     macPaths[0],
     path.join('/Users/dev', 'Library', 'Application Support', 'Antigravity', 'DevToolsActivePort')
@@ -90,22 +79,6 @@ test('DevToolsActivePort parsing, cross-platform discovery (2.0 + IDE), and stri
   assert.equal(
     macPaths[1],
     path.join('/Users/dev', 'Library', 'Application Support', 'Antigravity IDE', 'DevToolsActivePort')
-  );
-  assert.equal(
-    macPaths[2],
-    path.join('/Users/dev', 'Library', 'Application Support', 'antigravity', 'DevToolsActivePort')
-  );
-  assert.equal(
-    macPaths[3],
-    path.join('/Users/dev', 'Library', 'Application Support', 'antigravity-ide', 'DevToolsActivePort')
-  );
-  assert.equal(
-    macPaths[4],
-    path.join('/Users/dev', '.config', 'Antigravity', 'DevToolsActivePort')
-  );
-  assert.equal(
-    macPaths[5],
-    path.join('/Users/dev', '.config', 'Antigravity IDE', 'DevToolsActivePort')
   );
 
   const linuxPaths = resolveDevToolsPortCandidates({ XDG_CONFIG_HOME: '/home/dev/.config' }, 'linux', '/home/dev');
@@ -357,12 +330,11 @@ test('CDP multi-window sync injects, skips healthy windows, hot-upgrades on vers
       const msg = JSON.parse(raw);
       if (msg.method === 'Runtime.evaluate') {
         const expr = msg.params.expression;
-        const ctx = windowContexts.get(this.targetId);
-        const previousBridge = ctx.__AGUsageMonitorBridge;
-        const value = vm.runInContext(expr, ctx);
-        if (ctx.__AGUsageMonitorBridge && ctx.__AGUsageMonitorBridge !== previousBridge) {
+        if (expr.includes('__AGUsageMonitorBridge =')) {
           injectEvalCount += 1;
         }
+        const ctx = windowContexts.get(this.targetId);
+        const value = vm.runInContext(expr, ctx);
         Promise.resolve(value).then((result) =>
           this._emit('message', {
             data: JSON.stringify({ id: msg.id, result: { result: { value: result } } }),
@@ -565,40 +537,236 @@ test('Compiled app.js mounts dual Shadow DOM hosts, tracks /c/<uuid> routes, pro
   const appJs = fs.readFileSync(appJsPath, 'utf8');
   const stylesCss = fs.readFileSync(stylesCssPath, 'utf8');
 
+  // Minimal DOM mock supporting ShadowRoot, querySelector, attributes, classes, and composedPath
+  class MockNode {
+    constructor(tag = 'div') {
+      this.tagName = String(tag).toUpperCase();
+      this.id = '';
+      this.className = '';
+      this.textContent = '';
+      this.style = {
+        _vars: new Map(),
+        setProperty(k, v) { this._vars.set(k, String(v)); },
+        getPropertyValue(k) { return this._vars.get(k) || ''; },
+        removeProperty(k) { this._vars.delete(k); },
+      };
+      this.dataset = {};
+      this.attributes = new Map();
+      this.children = [];
+      this.parentNode = null;
+      this.shadowRoot = null;
+      this._listeners = new Map();
+      const self = this;
+      this.classList = {
+        _set() {
+          return new Set(String(self.className || '').split(/\s+/).filter(Boolean));
+        },
+        add(...tokens) {
+          const s = this._set();
+          for (const t of tokens) if (t) s.add(t);
+          self.className = Array.from(s).join(' ');
+        },
+        contains(tok) {
+          return this._set().has(tok);
+        },
+        toggle(tok, force) {
+          const s = this._set();
+          const should = force === undefined ? !s.has(tok) : Boolean(force);
+          if (should) s.add(tok);
+          else s.delete(tok);
+          self.className = Array.from(s).join(' ');
+        },
+      };
+    }
+    get parentElement() { return this.parentNode; }
+    get firstChild() { return this.children[0] || null; }
+    get firstElementChild() { return this.children[0] || null; }
+    get lastElementChild() { return this.children[this.children.length - 1] || null; }
+    get nextSibling() {
+      if (!this.parentNode) return null;
+      const idx = this.parentNode.children.indexOf(this);
+      return idx >= 0 ? this.parentNode.children[idx + 1] || null : null;
+    }
+    get isConnected() {
+      let cur = this;
+      while (cur) {
+        if (cur.isDocumentRoot) return true;
+        cur = cur.parentNode || cur.host || null;
+      }
+      return false;
+    }
+    setAttribute(k, v) {
+      const s = String(v);
+      this.attributes.set(k, s);
+      if (k === 'id') this.id = s;
+      if (k === 'class') this.className = s;
+    }
+    getAttribute(k) { return this.attributes.has(k) ? this.attributes.get(k) : null; }
+    hasAttribute(k) { return this.attributes.has(k); }
+    removeAttribute(k) { this.attributes.delete(k); }
+    appendChild(child) {
+      if (child.parentNode) child.parentNode.removeChild(child);
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    }
+    insertBefore(node, refNode) {
+      if (!refNode) return this.appendChild(node);
+      if (node.parentNode) node.parentNode.removeChild(node);
+      const idx = this.children.indexOf(refNode);
+      node.parentNode = this;
+      if (idx < 0) this.children.push(node);
+      else this.children.splice(idx, 0, node);
+      return node;
+    }
+    removeChild(child) {
+      const idx = this.children.indexOf(child);
+      if (idx >= 0) {
+        this.children.splice(idx, 1);
+        child.parentNode = null;
+      }
+      return child;
+    }
+    remove() {
+      if (this.parentNode) this.parentNode.removeChild(this);
+    }
+    attachShadow() {
+      const sr = new MockNode('#shadow-root');
+      sr.host = this;
+      this.shadowRoot = sr;
+      return sr;
+    }
+    contains(other) {
+      let cur = other;
+      while (cur) {
+        if (cur === this) return true;
+        cur = cur.parentNode;
+      }
+      return false;
+    }
+    addEventListener(type, fn) {
+      if (!this._listeners.has(type)) this._listeners.set(type, []);
+      this._listeners.get(type).push(fn);
+    }
+    removeEventListener(type, fn) {
+      const arr = this._listeners.get(type);
+      if (!arr) return;
+      const idx = arr.indexOf(fn);
+      if (idx >= 0) arr.splice(idx, 1);
+    }
+    dispatchEvent(ev) {
+      for (const fn of [...(this._listeners.get(ev.type) || [])]) fn(ev);
+    }
+    getBoundingClientRect() {
+      return { left: 900, right: 1080, top: 6, bottom: 32, width: 180, height: 26 };
+    }
+    querySelector(sel) {
+      if (sel === ':scope > div.shrink-0') {
+        return this.children.find((c) => c.classList.contains('shrink-0')) || null;
+      }
+      return this._find((n) => {
+        if (sel === '[class*="@container/titlebar"]') {
+          return String(n.className || '').includes('@container/titlebar');
+        }
+        if (sel.startsWith('.')) {
+          return n.classList.contains(sel.slice(1));
+        }
+        return false;
+      });
+    }
+    querySelectorAll(sel) {
+      const s = String(sel || '').trim();
+      if (!s || s.includes(',')) return [];
+      if (s.includes(' ')) {
+        const [first, ...rest] = s.split(/\s+/);
+        const roots = this.querySelectorAll(first);
+        const out = [];
+        for (const r of roots) {
+          for (const item of r.querySelectorAll(rest.join(' '))) {
+            if (!out.includes(item)) out.push(item);
+          }
+        }
+        return out;
+      }
+      if (!s.startsWith('.')) return [];
+      const cls = s.slice(1);
+      const out = [];
+      const walk = (node) => {
+        for (const c of node.children) {
+          if (c.classList.contains(cls)) out.push(c);
+          walk(c);
+        }
+      };
+      walk(this);
+      return out;
+    }
+    _find(pred) {
+      for (const c of this.children) {
+        if (pred(c)) return c;
+        const hit = c._find(pred);
+        if (hit) return hit;
+      }
+      return null;
+    }
+  }
+
+  const docRoot = new MockNode('html');
+  docRoot.isDocumentRoot = true;
+  const body = new MockNode('body');
+  docRoot.appendChild(body);
+
+  // Build simulated Antigravity titlebar
+  const titlebar = new MockNode('div');
+  titlebar.className = 'flex items-center @container/titlebar';
+  const titleLeft = new MockNode('div');
+  titleLeft.textContent = 'Chat Title';
+  const titleRight = new MockNode('div');
+  titleRight.className = 'shrink-0 flex items-center';
+  const nativeBtn = new MockNode('button');
+  titleRight.appendChild(nativeBtn);
+  titlebar.appendChild(titleLeft);
+  titlebar.appendChild(titleRight);
+  body.appendChild(titlebar);
+
   let reloadCalled = false;
   let currentBundleVer = 'ver-100';
   let currentAccountEmail = 'test@example.com';
   let liveSubagentPollActive = false;
   const fetchedUrls = [];
   const fetchedHeaders = [];
-  const createdForms = [];
+
+  const docListeners = new Map();
   const winListeners = new Map();
 
-  const {
-    docRoot,
+  const mockDocument = {
+    readyState: 'complete',
+    hidden: false,
+    documentElement: docRoot,
     body,
-    document: mockDocument,
-    docListeners,
-    makeElement,
-  } = createMockDom({
-    defaultRect: { left: 900, right: 1080, top: 6, bottom: 32, width: 180, height: 26 },
-    onCreateElement: (node, tag) => {
-      if (tag === 'form') createdForms.push(node);
+    createElement: (tag) => new MockNode(tag),
+    createElementNS: (_ns, tag) => new MockNode(tag),
+    createTextNode: (txt) => {
+      const t = new MockNode('#text');
+      t.textContent = String(txt);
+      return t;
     },
-  });
-
-  // Build simulated Antigravity titlebar
-  const titlebar = makeElement('div');
-  titlebar.className = 'flex items-center @container/titlebar';
-  const titleLeft = makeElement('div');
-  titleLeft.textContent = 'Chat Title';
-  const titleRight = makeElement('div');
-  titleRight.className = 'shrink-0 flex items-center';
-  const nativeBtn = makeElement('button');
-  titleRight.appendChild(nativeBtn);
-  titlebar.appendChild(titleLeft);
-  titlebar.appendChild(titleRight);
-  body.appendChild(titlebar);
+    getElementById: (id) => docRoot._find((n) => n.id === id),
+    querySelector: (sel) => docRoot.querySelector(sel),
+    querySelectorAll: () => [],
+    addEventListener(type, fn) {
+      if (!docListeners.has(type)) docListeners.set(type, []);
+      docListeners.get(type).push(fn);
+    },
+    removeEventListener(type, fn) {
+      const arr = docListeners.get(type);
+      if (!arr) return;
+      const i = arr.indexOf(fn);
+      if (i >= 0) arr.splice(i, 1);
+    },
+    dispatchEvent(ev) {
+      for (const fn of [...(docListeners.get(ev.type) || [])]) fn(ev);
+    },
+  };
 
   const mockLocation = {
     pathname: '/c/aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb',
@@ -1248,11 +1416,7 @@ test('Compiled app.js mounts dual Shadow DOM hosts, tracks /c/<uuid> routes, pro
     assert.equal(liveDotSvg.attributes.get('width'), '11', 'Enlarged live activity SVG dot size is 11');
     assert.equal(liveDotSvg.children[0].attributes.get('r'), '5', 'Enlarged dot circle radius is 5');
     assert.match(stylesCss, /\.wm-multi-dot\s*\{\s*width:\s*8px;\s*height:\s*8px;/, 'Topbar multi-session dot enlarged to 8px');
-    assert.match(
-      stylesCss,
-      /\.wm-hover-tip\s*\{[^}]*width:\s*min\(calc\(522px \* var\(--ui-panel-scale, 1\)\),\s*calc\(100vw - 24px\)\);/,
-      'Hover floating card base width is 522px and scales with --ui-panel-scale'
-    );
+    assert.match(stylesCss, /\.wm-hover-tip\s*\{[^}]*width:\s*min\(522px,\s*calc\(100vw - 24px\)\);/, 'Hover floating card width is 522px');
     assert.equal(multiPanelEl.querySelector('.wm-recent-list'), null, 'Recent sessions list removed so panel shows online sessions only');
     assert.equal(multiPanelEl.querySelector('.panel'), null, 'Single-layer multi-session panel without nested .panel box');
 
@@ -1393,25 +1557,19 @@ test('Compiled app.js mounts dual Shadow DOM hosts, tracks /c/<uuid> routes, pro
     assert.equal(mockSettings.themeAccent, 'host');
     assert.equal(portalHost.style.getPropertyValue('--user-accent-primary'), '', 'Host accent clears override');
 
-    // Font scale: switch to xl (1.28), verify portalHost and inner panels scale while capsuleHost NEVER scales
+    // Font scale: switch to xl (1.15), verify portalHost scales while capsuleHost NEVER scales
     assert.equal(fontScaleBtns.length, 4, 'Font scale segmented control has sm / md / lg / xl');
     fontScaleBtns[3].dispatchEvent({ type: 'click', stopPropagation() {} });
     await new Promise((r) => setTimeout(r, 30));
     assert.equal(mockSettings.fontScale, 'xl');
-    assert.equal(portalHost.style.getPropertyValue('--ui-font-scale'), '1.28', 'Portal host scales to 1.28');
-    assert.equal(portalHost.style.getPropertyValue('--ui-panel-scale'), '1.18', 'Portal host panel width scales to 1.18');
-    assert.equal(popoverEl.getAttribute('data-font-scale'), 'xl', 'Popover panel receives data-font-scale');
-    assert.equal(hoverTipEl.getAttribute('data-font-scale'), 'xl', 'Hover card receives data-font-scale');
-    assert.equal(multiPanelEl.getAttribute('data-font-scale'), 'xl', 'Multi-session panel receives data-font-scale');
+    assert.equal(portalHost.style.getPropertyValue('--ui-font-scale'), '1.15', 'Portal host scales to 1.15');
     assert.equal(capsuleHost.style.getPropertyValue('--ui-font-scale'), '', 'Capsule host strictly excludes font scale');
     assert.equal(capsuleHost.hasAttribute('data-font-scale'), false);
     fontScaleBtns[1].dispatchEvent({ type: 'click', stopPropagation() {} });
     await new Promise((r) => setTimeout(r, 30));
     assert.equal(mockSettings.fontScale, 'md');
     assert.equal(portalHost.style.getPropertyValue('--ui-font-scale'), '');
-    assert.equal(portalHost.style.getPropertyValue('--ui-panel-scale'), '');
     assert.equal(portalHost.getAttribute('data-font-scale'), 'md');
-    assert.equal(popoverEl.getAttribute('data-font-scale'), 'md');
 
     // Live i18n switch: zh-CN -> en-US -> zh-CN without page reload
     langBtns[1].dispatchEvent({ type: 'click', stopPropagation() {} });
@@ -1515,7 +1673,6 @@ test('Compiled app.js mounts dual Shadow DOM hosts, tracks /c/<uuid> routes, pro
     const previewCapsuleSlots = sec0.querySelectorAll('.wm-cap-slot');
     const previewMultiBtn = sec0.querySelector('.wm-multi-btn');
     assert.ok(previewCapsuleBar, 'Pane 0 mounts real CapsuleBarWidget preview');
-    assert.equal(previewCapsuleBar.querySelector('.preview-win-controls'), null, 'No redundant 3 window dots after capsule');
     assert.equal(previewCapsuleSlots.length, 5, 'Preview CapsuleBarWidget mounts real 5 capsule slots');
     assert.equal(previewCapsuleSlots[0].children[0].textContent, '68.4 t/s', 'Preview slot 0 renders simulated speed');
     assert.equal(previewCapsuleSlots[0].classList.contains('tone-good'), true, 'Preview capsule 68.4 t/s shares tone-good green with cards');
@@ -1753,21 +1910,6 @@ test('Compiled app.js mounts dual Shadow DOM hosts, tracks /c/<uuid> routes, pro
     assert.equal(sec2.hasAttribute('hidden'), false);
     const overviewPreviewHostEl = sec2.querySelector('.overview-modules-host');
     assert.equal(overviewPreviewHostEl.children.length, 4, 'Overview preview mounts all 4 real overview widgets');
-    assert.equal(
-      sec2.querySelector('.structure-preview-canvas').classList.contains('is-scaled'),
-      false,
-      'Overview preview canvas renders 1:1 without zoom scaling'
-    );
-    const previewCellSubs = Array.from(overviewPreviewHostEl.children[0].querySelectorAll('.cell-sub')).map(
-      (el) => el.textContent
-    );
-    assert.ok(previewCellSubs.includes('均值 1.4s'), 'Preview TTFT card shows populated mean TTFT');
-    assert.ok(previewCellSubs.includes('有效 23/24 步'), 'Preview Avg TPS card shows populated valid sample ratio');
-    assert.equal(
-      overviewPreviewHostEl.children[2].querySelector('.panel-meta').textContent,
-      'Google AI Ultra · Pro',
-      'Preview quota badge matches real tier · plan format'
-    );
 
     const [ovModWrap, ovMetricWrap] = sec2.querySelectorAll('.editable-slot-wrap');
     // Move row 2 ('quotas') up above 'context' -> ['metrics', 'quotas', 'context', 'live_tasks']
@@ -2077,47 +2219,6 @@ test('Compiled app.js mounts dual Shadow DOM hosts, tracks /c/<uuid> routes, pro
     assert.equal(trendTooltipEl.hasAttribute('hidden'), false, 'Tooltip opens on heatmap cell hover');
     assert.equal(activeCell.classList.contains('is-hovered'), true);
     assert.match(trendTooltipEl.querySelector('.trend-tip-tokens').textContent, /100\.0k tok/);
-
-    // Crossing 2px inter-cell gaps keeps highlight/tooltip steady without flickering, and fast jumps snap to nearest cell
-    const hmBodyEl = heatmapStageEl.querySelector('.trend-heatmap-body');
-    const hmTotalWeeks = Number(hmBodyEl.style.getPropertyValue('--hm-weeks'));
-    const origGridRectFn = hmGridEl.getBoundingClientRect;
-    hmGridEl.getBoundingClientRect = () => ({
-      left: 100,
-      top: 200,
-      width: hmTotalWeeks * 10 - 2,
-      height: 7 * 10 - 2,
-      right: 100 + hmTotalWeeks * 10 - 2,
-      bottom: 200 + 7 * 10 - 2,
-    });
-    const activeCol = Number(activeCell.getAttribute('data-hm-col'));
-    const activeRow = Number(activeCell.getAttribute('data-hm-row'));
-    hmGridEl.dispatchEvent({ type: 'mouseover', target: hmGridEl });
-    assert.equal(trendTooltipEl.hasAttribute('hidden'), false, 'Container mouseover in gap does not blink tooltip');
-    hmGridEl.dispatchEvent({
-      type: 'mousemove',
-      target: hmGridEl,
-      clientX: 100 + activeCol * 10 + 9,
-      clientY: 200 + activeRow * 10 + 4,
-    });
-    assert.equal(trendTooltipEl.hasAttribute('hidden'), false, 'Tooltip stays visible in 2px gap beside active cell');
-    assert.equal(activeCell.classList.contains('is-hovered'), true, 'Active cell stays highlighted across bordering gap');
-
-    const snappedCol5Cell = realDayCells.find(
-      (c) => c.getAttribute('data-hm-col') === '5' && c.getAttribute('data-hm-row') === '2'
-    );
-    assert.ok(snappedCol5Cell, 'Target cell at col=5,row=2 exists');
-    hmGridEl.dispatchEvent({
-      type: 'mousemove',
-      target: hmGridEl,
-      clientX: 100 + 5 * 10 + 8.4,
-      clientY: 200 + 2 * 10 + 4,
-    });
-    assert.equal(trendTooltipEl.hasAttribute('hidden'), false, 'Tooltip stays visible when snapping across distant gap');
-    assert.equal(activeCell.classList.contains('is-hovered'), false);
-    assert.equal(snappedCol5Cell.classList.contains('is-hovered'), true, 'Fast pointer jump into distant gap snaps to nearest cell');
-    hmGridEl.getBoundingClientRect = origGridRectFn;
-
     hmGridEl.dispatchEvent({ type: 'mouseleave' });
     assert.equal(trendTooltipEl.hasAttribute('hidden'), true, 'Tooltip hides on mouseleave');
 
@@ -2601,9 +2702,6 @@ test('Compiled app.js mounts dual Shadow DOM hosts, tracks /c/<uuid> routes, pro
       'Hover legend updates strictly in-place without DOM node replacement or appendChild'
     );
 
-    assert.equal(createdForms.some((form) => form.className.includes('settings-account-form')), false);
-    assert.equal(fetchedUrls.some((url) => url.includes('/api/accounts')), false);
-
     // Verify in-place bridge port rotation preserves exact DOM host nodes without remount
     fetchShouldFail = false;
     assert.equal(ov.updateBridge({ port: 51234, token: 'rotated-token-456' }), true);
@@ -2911,37 +3009,245 @@ test('Compiled app.js in Antigravity IDE workbench.html docks into .part.titleba
   const appJs = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
   const stylesCss = fs.readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-  const {
-    docRoot,
-    body,
-    document: mockDocument,
-    makeElement: makeIdeNode,
-  } = createMockDom({
-    defaultRect: { left: 0, right: 1440, top: 0, bottom: 35, width: 1440, height: 35 },
-    inheritAncestorRect: true,
-  });
+  class IdeMockNode {
+    constructor(tag = 'div') {
+      this.tagName = String(tag).toUpperCase();
+      this.id = '';
+      this.className = '';
+      this.textContent = '';
+      this._rect = { left: 0, right: 1440, top: 0, bottom: 35, width: 1440, height: 35 };
+      this.dataset = {};
+      const vars = new Map();
+      this.style = {
+        marginLeft: '',
+        top: '',
+        right: '',
+        left: '',
+        maxHeight: '',
+        _vars: vars,
+        setProperty(k, v) {
+          vars.set(k, String(v));
+        },
+        removeProperty(k) {
+          vars.delete(k);
+        },
+        getPropertyValue(k) {
+          return vars.get(k) || '';
+        },
+      };
+      this.attributes = new Map();
+      this.children = [];
+      this.parentNode = null;
+      this.shadowRoot = null;
+      this._listeners = new Map();
+      const self = this;
+      this.classList = {
+        _set() {
+          return new Set(String(self.className || '').split(/\s+/).filter(Boolean));
+        },
+        add(...tokens) {
+          const s = this._set();
+          for (const t of tokens) if (t) s.add(t);
+          self.className = Array.from(s).join(' ');
+        },
+        contains(tok) {
+          return this._set().has(tok);
+        },
+        toggle(tok, force) {
+          const s = this._set();
+          const should = force === undefined ? !s.has(tok) : Boolean(force);
+          if (should) s.add(tok);
+          else s.delete(tok);
+          self.className = Array.from(s).join(' ');
+        },
+      };
+    }
+    get parentElement() {
+      return this.parentNode;
+    }
+    get firstChild() {
+      return this.children[0] || null;
+    }
+    get firstElementChild() {
+      return this.children[0] || null;
+    }
+    get lastElementChild() {
+      return this.children[this.children.length - 1] || null;
+    }
+    get isConnected() {
+      let cur = this;
+      while (cur) {
+        if (cur.isDocumentRoot) return true;
+        cur = cur.parentNode || cur.host || null;
+      }
+      return false;
+    }
+    setAttribute(k, v) {
+      const s = String(v);
+      this.attributes.set(k, s);
+      if (k === 'id') this.id = s;
+      if (k === 'class') this.className = s;
+    }
+    getAttribute(k) {
+      return this.attributes.has(k) ? this.attributes.get(k) : null;
+    }
+    hasAttribute(k) {
+      return this.attributes.has(k);
+    }
+    removeAttribute(k) {
+      this.attributes.delete(k);
+    }
+    appendChild(child) {
+      if (child.parentNode) child.parentNode.removeChild(child);
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    }
+    insertBefore(node, refNode) {
+      if (!refNode) return this.appendChild(node);
+      if (node.parentNode) node.parentNode.removeChild(node);
+      const idx = this.children.indexOf(refNode);
+      node.parentNode = this;
+      if (idx < 0) this.children.push(node);
+      else this.children.splice(idx, 0, node);
+      return node;
+    }
+    removeChild(child) {
+      const idx = this.children.indexOf(child);
+      if (idx >= 0) {
+        this.children.splice(idx, 1);
+        child.parentNode = null;
+      }
+      return child;
+    }
+    remove() {
+      if (this.parentNode) this.parentNode.removeChild(this);
+    }
+    attachShadow() {
+      const sr = new IdeMockNode('#shadow-root');
+      sr.host = this;
+      this.shadowRoot = sr;
+      return sr;
+    }
+    contains(other) {
+      let cur = other;
+      while (cur) {
+        if (cur === this) return true;
+        cur = cur.parentNode;
+      }
+      return false;
+    }
+    addEventListener(type, fn) {
+      if (!this._listeners.has(type)) this._listeners.set(type, []);
+      this._listeners.get(type).push(fn);
+    }
+    removeEventListener(type, fn) {
+      const arr = this._listeners.get(type);
+      if (!arr) return;
+      const idx = arr.indexOf(fn);
+      if (idx >= 0) arr.splice(idx, 1);
+    }
+    dispatchEvent(ev) {
+      for (const fn of [...(this._listeners.get(ev.type) || [])]) fn(ev);
+    }
+    getBoundingClientRect() {
+      if (this._rect) return this._rect;
+      if (this._ownRect) return this._ownRect;
+      let cur = this.parentNode || this.host || null;
+      while (cur) {
+        if (cur._rect) return cur._rect;
+        if (cur._ownRect) return cur._ownRect;
+        cur = cur.parentNode || cur.host || null;
+      }
+      return { left: 820, right: 946, top: 810, bottom: 836, width: 126, height: 26 };
+    }
+    matchesNode(sel) {
+      if (sel === '[class*="@container/titlebar"]') {
+        return String(this.className || '').includes('@container/titlebar');
+      }
+      if (sel === '[data-testid="conversation-view"][data-cascade-id]') {
+        return (
+          this.getAttribute('data-testid') === 'conversation-view' &&
+          this.hasAttribute('data-cascade-id')
+        );
+      }
+      if (sel === '[data-testid^="conversation-row-"][data-selected="true"][data-cascade-id]') {
+        return (
+          String(this.getAttribute('data-testid') || '').startsWith('conversation-row-') &&
+          this.getAttribute('data-selected') === 'true' &&
+          this.hasAttribute('data-cascade-id')
+        );
+      }
+      if (sel.startsWith('.')) {
+        const classes = sel.slice(1).split('.').filter(Boolean);
+        return classes.every((c) => this.classList.contains(c));
+      }
+      return false;
+    }
+    querySelector(sel) {
+      if (sel.startsWith(':scope > ')) {
+        const rest = sel.slice(':scope > '.length).trim();
+        if (rest === 'div.shrink-0') {
+          return this.children.find((c) => c.classList.contains('shrink-0')) || null;
+        }
+        return this.children.find((c) => c.matchesNode(rest)) || null;
+      }
+      return this._find((n) => n.matchesNode(sel));
+    }
+    querySelectorAll(sel) {
+      const out = [];
+      const walk = (node) => {
+        for (const c of node.children) {
+          if (c.matchesNode(sel)) out.push(c);
+          walk(c);
+        }
+      };
+      walk(this);
+      return out;
+    }
+    _find(pred) {
+      for (const c of this.children) {
+        if (pred(c)) return c;
+        const hit = c._find(pred);
+        if (hit) return hit;
+      }
+      return null;
+    }
+  }
+
+  const docRoot = new IdeMockNode('html');
+  docRoot.isDocumentRoot = true;
+  const head = new IdeMockNode('head');
+  const body = new IdeMockNode('body');
+  docRoot.appendChild(head);
+  docRoot.appendChild(body);
 
   // Build Antigravity IDE .monaco-workbench with BOTH top window .part.titlebar AND inner chat @container/titlebar
-  const workbench = makeIdeNode('div');
+  const workbench = new IdeMockNode('div');
   workbench.className = 'monaco-workbench vs-dark';
 
-  const partTitlebar = makeIdeNode('div');
+  const partTitlebar = new IdeMockNode('div');
   partTitlebar.className = 'part titlebar';
-  const tbContainer = makeIdeNode('div');
+  const tbContainer = new IdeMockNode('div');
   tbContainer.className = 'titlebar-container has-center';
-  const tbLeft = makeIdeNode('div', { left: 0, right: 60, top: 0, bottom: 35, width: 60, height: 35 });
+  const tbLeft = new IdeMockNode('div');
   tbLeft.className = 'titlebar-left';
-  const tbCenter = makeIdeNode('div', { left: 540, right: 900, top: 0, bottom: 35, width: 360, height: 35 });
+  tbLeft._rect = { left: 0, right: 60, top: 0, bottom: 35, width: 60, height: 35 };
+  const tbCenter = new IdeMockNode('div');
   tbCenter.className = 'titlebar-center';
-  const tbRight = makeIdeNode('div', { left: 900, right: 1440, top: 0, bottom: 35, width: 540, height: 35 });
+  tbCenter._rect = { left: 540, right: 900, top: 0, bottom: 35, width: 360, height: 35 };
+  const tbRight = new IdeMockNode('div');
   tbRight.className = 'titlebar-right';
+  tbRight._rect = { left: 900, right: 1440, top: 0, bottom: 35, width: 540, height: 35 };
 
-  const actionToolbar = makeIdeNode('div', { left: 1170, right: 1300, top: 0, bottom: 35, width: 130, height: 35 });
+  const actionToolbar = new IdeMockNode('div');
   actionToolbar.className = 'action-toolbar-container';
   actionToolbar.style.marginLeft = 'auto';
+  actionToolbar._rect = { left: 1170, right: 1300, top: 0, bottom: 35, width: 130, height: 35 };
 
-  const winControls = makeIdeNode('div', { left: 1300, right: 1440, top: 0, bottom: 35, width: 140, height: 35 });
+  const winControls = new IdeMockNode('div');
   winControls.className = 'window-controls-container';
+  winControls._rect = { left: 1300, right: 1440, top: 0, bottom: 35, width: 140, height: 35 };
 
   tbRight.appendChild(actionToolbar);
   tbRight.appendChild(winControls);
@@ -2952,15 +3258,15 @@ test('Compiled app.js in Antigravity IDE workbench.html docks into .part.titleba
   workbench.appendChild(partTitlebar);
 
   // Inner chat pane header + conversation view
-  const innerChatHeader = makeIdeNode('div');
+  const innerChatHeader = new IdeMockNode('div');
   innerChatHeader.className = 'flex items-center @container/titlebar';
-  const innerChatRight = makeIdeNode('div');
+  const innerChatRight = new IdeMockNode('div');
   innerChatRight.className = 'shrink-0 flex items-center';
-  innerChatHeader.appendChild(makeIdeNode('div'));
+  innerChatHeader.appendChild(new IdeMockNode('div'));
   innerChatHeader.appendChild(innerChatRight);
   workbench.appendChild(innerChatHeader);
 
-  const convView = makeIdeNode('div');
+  const convView = new IdeMockNode('div');
   convView.setAttribute('data-testid', 'conversation-view');
   convView.setAttribute('data-cascade-id', '12345678-aaaa-bbbb-cccc-1234567890ab');
   workbench.appendChild(convView);
@@ -2978,12 +3284,41 @@ test('Compiled app.js in Antigravity IDE workbench.html docks into .part.titleba
   ]);
 
   const mutationObservers = [];
-  class IdeMutationObserver extends MockMutationObserver {
+  class MockMutationObserver {
     constructor(cb) {
-      super(cb, mutationObservers);
+      this.cb = cb;
+      this.targets = [];
+      mutationObservers.push(this);
+    }
+    observe(target, options) {
+      this.targets.push({ target, options });
+    }
+    disconnect() {
+      this.targets = [];
     }
   }
+
   const fetchedUrls = [];
+  const mockDocument = {
+    readyState: 'complete',
+    hidden: false,
+    activeElement: null,
+    documentElement: docRoot,
+    head,
+    body,
+    createElement: (tag) => new IdeMockNode(tag),
+    createElementNS: (_ns, tag) => new IdeMockNode(tag),
+    createTextNode: (txt) => {
+      const t = new IdeMockNode('#text');
+      t.textContent = String(txt);
+      return t;
+    },
+    getElementById: (id) => docRoot._find((n) => n.id === id),
+    querySelector: (sel) => docRoot.querySelector(sel),
+    querySelectorAll: (sel) => docRoot.querySelectorAll(sel),
+    addEventListener() {},
+    removeEventListener() {},
+  };
 
   const mockWindow = {
     innerWidth: 1440,
@@ -3052,7 +3387,7 @@ test('Compiled app.js in Antigravity IDE workbench.html docks into .part.titleba
     document: mockDocument,
     location: mockWindow.location,
     navigator: {},
-    MutationObserver: IdeMutationObserver,
+    MutationObserver: MockMutationObserver,
     URLSearchParams,
     AbortController,
     setTimeout,
@@ -3349,65 +3684,261 @@ test('Composer mount mode (输入框挂载) docks capsule immediately left of Au
   const appJs = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
   const stylesCss = fs.readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-  const {
-    body,
-    document: mockDocument,
-    makeElement: makeCompNode,
-  } = createMockDom({
-    rootRect: { left: 0, right: 1440, top: 0, bottom: 900, width: 1440, height: 900 },
-    defaultRect: { left: 820, right: 946, top: 810, bottom: 836, width: 126, height: 26 },
-    inheritAncestorRect: true,
-  });
+  class ComposerMockNode {
+    constructor(tag, rect = null) {
+      this.tagName = String(tag || 'div').toUpperCase();
+      this.nodeName = this.tagName;
+      this.id = '';
+      this.className = '';
+      this._text = '';
+      this._ownRect = rect || null;
+      this.style = {
+        marginLeft: '',
+        top: '',
+        left: '',
+        right: '',
+        height: '',
+        maxHeight: '',
+        _vars: new Map(),
+        setProperty(k, v) {
+          this._vars.set(k, String(v));
+        },
+        getPropertyValue(k) {
+          return this._vars.get(k) || '';
+        },
+      };
+      this.dataset = {};
+      this.attributes = new Map();
+      this.children = [];
+      this.parentNode = null;
+      this.shadowRoot = null;
+      this._listeners = new Map();
+      const self = this;
+      this.classList = {
+        _set() {
+          return new Set(String(self.className || '').split(/\s+/).filter(Boolean));
+        },
+        add(...tokens) {
+          const s = this._set();
+          for (const t of tokens) if (t) s.add(t);
+          self.className = Array.from(s).join(' ');
+        },
+        contains(tok) {
+          return this._set().has(tok);
+        },
+        toggle(tok, force) {
+          const s = this._set();
+          const should = force === undefined ? !s.has(tok) : Boolean(force);
+          if (should) s.add(tok);
+          else s.delete(tok);
+          self.className = Array.from(s).join(' ');
+        },
+      };
+    }
+    get textContent() {
+      if (this.children.length === 0) return this._text;
+      return this._text + this.children.map((c) => c.textContent).join('');
+    }
+    set textContent(v) {
+      this._text = String(v ?? '');
+      this.children = [];
+    }
+    get parentElement() {
+      return this.parentNode;
+    }
+    get firstChild() {
+      return this.children[0] || null;
+    }
+    get firstElementChild() {
+      return this.children[0] || null;
+    }
+    get lastElementChild() {
+      return this.children[this.children.length - 1] || null;
+    }
+    get nextElementSibling() {
+      if (!this.parentNode) return null;
+      const idx = this.parentNode.children.indexOf(this);
+      return idx >= 0 ? this.parentNode.children[idx + 1] || null : null;
+    }
+    get isConnected() {
+      let cur = this;
+      while (cur) {
+        if (cur.isDocumentRoot) return true;
+        cur = cur.parentNode || cur.host || null;
+      }
+      return false;
+    }
+    setAttribute(k, v) {
+      const s = String(v);
+      this.attributes.set(k, s);
+      if (k === 'id') this.id = s;
+      if (k === 'class') this.className = s;
+    }
+    getAttribute(k) {
+      return this.attributes.has(k) ? this.attributes.get(k) : null;
+    }
+    hasAttribute(k) {
+      return this.attributes.has(k);
+    }
+    removeAttribute(k) {
+      this.attributes.delete(k);
+    }
+    appendChild(child) {
+      if (child.parentNode) child.parentNode.removeChild(child);
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    }
+    insertBefore(node, refNode) {
+      if (!refNode) return this.appendChild(node);
+      if (node.parentNode) node.parentNode.removeChild(node);
+      const idx = this.children.indexOf(refNode);
+      node.parentNode = this;
+      if (idx < 0) this.children.push(node);
+      else this.children.splice(idx, 0, node);
+      return node;
+    }
+    removeChild(child) {
+      const idx = this.children.indexOf(child);
+      if (idx >= 0) {
+        this.children.splice(idx, 1);
+        child.parentNode = null;
+      }
+      return child;
+    }
+    remove() {
+      if (this.parentNode) this.parentNode.removeChild(this);
+    }
+    attachShadow() {
+      const sr = new ComposerMockNode('#shadow-root');
+      sr.host = this;
+      this.shadowRoot = sr;
+      return sr;
+    }
+    contains(other) {
+      let cur = other;
+      while (cur) {
+        if (cur === this) return true;
+        cur = cur.parentNode;
+      }
+      return false;
+    }
+    addEventListener(type, fn) {
+      if (!this._listeners.has(type)) this._listeners.set(type, []);
+      this._listeners.get(type).push(fn);
+    }
+    removeEventListener(type, fn) {
+      const arr = this._listeners.get(type);
+      if (!arr) return;
+      const i = arr.indexOf(fn);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    dispatchEvent(ev) {
+      for (const fn of [...(this._listeners.get(ev.type) || [])]) fn(ev);
+    }
+    getBoundingClientRect() {
+      if (this._rect) return this._rect;
+      if (this._ownRect) return this._ownRect;
+      let cur = this.parentNode || this.host || null;
+      while (cur) {
+        if (cur._rect) return cur._rect;
+        if (cur._ownRect) return cur._ownRect;
+        cur = cur.parentNode || cur.host || null;
+      }
+      return { left: 820, right: 946, top: 810, bottom: 836, width: 126, height: 26 };
+    }
+    _matchesSingle(sel) {
+      const s = String(sel || '').trim();
+      if (!s) return false;
+      if (s === '[class*="@container/titlebar"]') {
+        return String(this.className || '').includes('@container/titlebar');
+      }
+      if (s.startsWith('.')) return this.classList.contains(s.slice(1));
+      if (s.startsWith('[') && s.endsWith(']')) {
+        const inner = s.slice(1, -1);
+        const eqIdx = inner.indexOf('=');
+        if (eqIdx < 0) return this.hasAttribute(inner);
+        const attr = inner.slice(0, eqIdx).trim();
+        const val = inner.slice(eqIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+        return this.getAttribute(attr) === val;
+      }
+      return this.tagName.toLowerCase() === s.toLowerCase();
+    }
+    querySelector(sel) {
+      if (sel === ':scope > div.shrink-0') {
+        return this.children.find((c) => c.classList.contains('shrink-0')) || null;
+      }
+      return this.querySelectorAll(sel)[0] || null;
+    }
+    querySelectorAll(sel) {
+      const s = String(sel || '').trim();
+      if (!s) return [];
+      const out = [];
+      const walk = (node) => {
+        for (const c of node.children) {
+          if (c._matchesSingle(s)) out.push(c);
+          walk(c);
+        }
+      };
+      walk(this);
+      return out;
+    }
+  }
+
+  const docRoot = new ComposerMockNode('html', { left: 0, right: 1440, top: 0, bottom: 900, width: 1440, height: 900 });
+  docRoot.isDocumentRoot = true;
+  const body = new ComposerMockNode('body', { left: 0, right: 1440, top: 0, bottom: 900, width: 1440, height: 900 });
+  docRoot.appendChild(body);
 
   // 1. Topbar
-  const titlebar = makeCompNode('div', { left: 0, right: 1440, top: 0, bottom: 38, width: 1440, height: 38 });
+  const titlebar = new ComposerMockNode('div', { left: 0, right: 1440, top: 0, bottom: 38, width: 1440, height: 38 });
   titlebar.className = 'flex items-center @container/titlebar';
-  const titleLeft = makeCompNode('div', { left: 16, right: 220, top: 6, bottom: 32, width: 204, height: 26 });
+  const titleLeft = new ComposerMockNode('div', { left: 16, right: 220, top: 6, bottom: 32, width: 204, height: 26 });
   titleLeft.textContent = 'Chat Title';
-  const titleRight = makeCompNode('div', { left: 1200, right: 1420, top: 6, bottom: 32, width: 220, height: 26 });
+  const titleRight = new ComposerMockNode('div', { left: 1200, right: 1420, top: 6, bottom: 32, width: 220, height: 26 });
   titleRight.className = 'shrink-0 flex items-center';
-  titleRight.appendChild(makeCompNode('button', { left: 1380, right: 1412, top: 6, bottom: 32, width: 32, height: 26 }));
+  titleRight.appendChild(new ComposerMockNode('button', { left: 1380, right: 1412, top: 6, bottom: 32, width: 32, height: 26 }));
   titlebar.appendChild(titleLeft);
   titlebar.appendChild(titleRight);
   body.appendChild(titlebar);
 
   // 2. Chat composer card at bottom: [+] [Gemini 4 Carbon High ^]  ...  [🛡️ Auto ^] [🎤] [→]
-  const composerCard = makeCompNode('div', { left: 220, right: 1120, top: 700, bottom: 848, width: 900, height: 148 });
+  const composerCard = new ComposerMockNode('div', { left: 220, right: 1120, top: 700, bottom: 848, width: 900, height: 148 });
   composerCard.className = 'rounded-2xl border p-3';
-  const editorEl = makeCompNode('textarea', { left: 236, right: 1104, top: 712, bottom: 796, width: 868, height: 84 });
+  const editorEl = new ComposerMockNode('textarea', { left: 236, right: 1104, top: 712, bottom: 796, width: 868, height: 84 });
   editorEl.setAttribute('role', 'textbox');
-  const toolbarRow = makeCompNode('div', { left: 236, right: 1104, top: 808, bottom: 838, width: 868, height: 30 });
+  const toolbarRow = new ComposerMockNode('div', { left: 236, right: 1104, top: 808, bottom: 838, width: 868, height: 30 });
   toolbarRow.className = 'flex items-center justify-between';
 
-  const leftCluster = makeCompNode('div', { left: 236, right: 446, top: 808, bottom: 838, width: 210, height: 30 });
+  const leftCluster = new ComposerMockNode('div', { left: 236, right: 446, top: 808, bottom: 838, width: 210, height: 30 });
   leftCluster.className = 'flex items-center gap-1';
-  const plusBtn = makeCompNode('button', { left: 236, right: 264, top: 810, bottom: 836, width: 28, height: 26 });
+  const plusBtn = new ComposerMockNode('button', { left: 236, right: 264, top: 810, bottom: 836, width: 28, height: 26 });
   plusBtn.textContent = '+';
-  const modelBtn = makeCompNode('button', { left: 270, right: 446, top: 810, bottom: 836, width: 176, height: 26 });
+  const modelBtn = new ComposerMockNode('button', { left: 270, right: 446, top: 810, bottom: 836, width: 176, height: 26 });
   modelBtn.textContent = 'Gemini 4 Carbon High ^';
   leftCluster.appendChild(plusBtn);
   leftCluster.appendChild(modelBtn);
 
-  const rightCluster = makeCompNode('div', { left: 950, right: 1104, top: 808, bottom: 838, width: 154, height: 30 });
+  const rightCluster = new ComposerMockNode('div', { left: 950, right: 1104, top: 808, bottom: 838, width: 154, height: 30 });
   rightCluster.className = 'flex items-center gap-1.5';
-  const autoWrap = makeCompNode('div', { left: 950, right: 1028, top: 810, bottom: 836, width: 78, height: 26 });
+  const autoWrap = new ComposerMockNode('div', { left: 950, right: 1028, top: 810, bottom: 836, width: 78, height: 26 });
   autoWrap.className = 'relative';
-  const autoBtn = makeCompNode('button', { left: 950, right: 1028, top: 810, bottom: 836, width: 78, height: 26 });
-  const shieldSvg = makeCompNode('svg');
-  const shieldTitle = makeCompNode('title');
+  const autoBtn = new ComposerMockNode('button', { left: 950, right: 1028, top: 810, bottom: 836, width: 78, height: 26 });
+  const shieldSvg = new ComposerMockNode('svg');
+  const shieldTitle = new ComposerMockNode('title');
   shieldTitle.textContent = 'Shield Icon';
   shieldSvg.appendChild(shieldTitle);
-  const autoLabel = makeCompNode('span');
+  const autoLabel = new ComposerMockNode('span');
   autoLabel.textContent = 'Auto';
-  const chevronSvg = makeCompNode('svg');
+  const chevronSvg = new ComposerMockNode('svg');
   autoBtn.appendChild(shieldSvg);
   autoBtn.appendChild(autoLabel);
   autoBtn.appendChild(chevronSvg);
   autoWrap.appendChild(autoBtn);
 
-  const micBtn = makeCompNode('button', { left: 1034, right: 1062, top: 810, bottom: 836, width: 28, height: 26 });
+  const micBtn = new ComposerMockNode('button', { left: 1034, right: 1062, top: 810, bottom: 836, width: 28, height: 26 });
   micBtn.setAttribute('aria-label', 'Voice input');
-  const sendBtn = makeCompNode('button', { left: 1068, right: 1100, top: 808, bottom: 838, width: 32, height: 30 });
+  const sendBtn = new ComposerMockNode('button', { left: 1068, right: 1100, top: 808, bottom: 838, width: 32, height: 30 });
   sendBtn.setAttribute('aria-label', 'Send message');
 
   rightCluster.appendChild(autoWrap);
@@ -3431,6 +3962,35 @@ test('Composer mount mode (输入框挂载) docks capsule immediately left of Au
     enableWindowOverlay: true,
     showTopbarMultiSession: true,
     topbarCapsuleSlots: ['context', 'tps', 'quota_auto'],
+  };
+
+  const mockDocument = {
+    readyState: 'complete',
+    hidden: false,
+    documentElement: docRoot,
+    body,
+    createElement: (tag) => new ComposerMockNode(tag),
+    createElementNS: (_ns, tag) => new ComposerMockNode(tag),
+    createTextNode: (txt) => {
+      const t = new ComposerMockNode('#text');
+      t.textContent = String(txt);
+      return t;
+    },
+    getElementById: (id) => {
+      const walk = (n) => {
+        if (n.id === id) return n;
+        for (const c of n.children) {
+          const hit = walk(c);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      return walk(docRoot);
+    },
+    querySelector: (sel) => docRoot.querySelector(sel),
+    querySelectorAll: (sel) => docRoot.querySelectorAll(sel),
+    addEventListener() {},
+    removeEventListener() {},
   };
 
   const mockWindow = {
@@ -3622,45 +4182,233 @@ test('Antigravity IDE composer mount mode (输入框挂载) docks inside extensi
   const appJs = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
   const stylesCss = fs.readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 
-  const {
-    body,
-    document: mockDoc,
-    makeElement: makeChatNode,
-  } = createMockDom({
-    rootRect: { left: 0, right: 980, top: 0, bottom: 900, width: 980, height: 900 },
-    defaultRect: { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 },
-    resolveRect: (node) =>
-      node.id === 'ag-usage-monitor-capsule' || node.classList.contains('wm-capsule-btn')
-        ? { left: 680, right: 830, top: 824, bottom: 850, width: 150, height: 26 }
-        : null,
-  });
+  class IdeChatMockNode {
+    constructor(tag = 'div', rect = null) {
+      this.tagName = String(tag).toUpperCase();
+      this.id = '';
+      this.className = '';
+      this._text = '';
+      this._rect = rect || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 };
+      this.dataset = {};
+      const vars = new Map();
+      this.style = {
+        display: '',
+        visibility: '',
+        opacity: '',
+        marginLeft: '',
+        top: '',
+        right: '',
+        left: '',
+        height: '',
+        maxHeight: '',
+        setProperty(k, v) {
+          vars.set(k, String(v));
+        },
+        removeProperty(k) {
+          vars.delete(k);
+        },
+        getPropertyValue(k) {
+          return vars.get(k) || '';
+        },
+      };
+      this.attributes = new Map();
+      this.children = [];
+      this.parentNode = null;
+      this.shadowRoot = null;
+      this._listeners = new Map();
+      const self = this;
+      this.classList = {
+        _set() {
+          return new Set(String(self.className || '').split(/\s+/).filter(Boolean));
+        },
+        add(...tokens) {
+          const s = this._set();
+          for (const t of tokens) if (t) s.add(t);
+          self.className = Array.from(s).join(' ');
+        },
+        contains(tok) {
+          return this._set().has(tok);
+        },
+        toggle(tok, force) {
+          const s = this._set();
+          const should = force === undefined ? !s.has(tok) : Boolean(force);
+          if (should) s.add(tok);
+          else s.delete(tok);
+          self.className = Array.from(s).join(' ');
+        },
+      };
+    }
+    get textContent() {
+      if (this.children.length === 0) return this._text;
+      return this._text + this.children.map((c) => c.textContent).join('');
+    }
+    set textContent(v) {
+      this._text = String(v ?? '');
+      this.children = [];
+    }
+    get parentElement() {
+      return this.parentNode;
+    }
+    get firstChild() {
+      return this.children[0] || null;
+    }
+    get firstElementChild() {
+      return this.children[0] || null;
+    }
+    get lastChild() {
+      return this.children[this.children.length - 1] || null;
+    }
+    get lastElementChild() {
+      return this.children[this.children.length - 1] || null;
+    }
+    get nextElementSibling() {
+      if (!this.parentNode) return null;
+      const idx = this.parentNode.children.indexOf(this);
+      return idx >= 0 ? this.parentNode.children[idx + 1] || null : null;
+    }
+    get isConnected() {
+      let cur = this;
+      while (cur) {
+        if (cur.isDocumentRoot) return true;
+        cur = cur.parentNode || cur.host || null;
+      }
+      return false;
+    }
+    setAttribute(k, v) {
+      const s = String(v);
+      this.attributes.set(k, s);
+      if (k === 'id') this.id = s;
+      if (k === 'class') this.className = s;
+    }
+    getAttribute(k) {
+      return this.attributes.has(k) ? this.attributes.get(k) : null;
+    }
+    hasAttribute(k) {
+      return this.attributes.has(k);
+    }
+    removeAttribute(k) {
+      this.attributes.delete(k);
+    }
+    appendChild(child) {
+      if (child.parentNode) child.parentNode.removeChild(child);
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    }
+    insertBefore(node, refNode) {
+      if (!refNode) return this.appendChild(node);
+      if (node.parentNode) node.parentNode.removeChild(node);
+      const idx = this.children.indexOf(refNode);
+      node.parentNode = this;
+      if (idx < 0) this.children.push(node);
+      else this.children.splice(idx, 0, node);
+      return node;
+    }
+    removeChild(child) {
+      const idx = this.children.indexOf(child);
+      if (idx >= 0) {
+        this.children.splice(idx, 1);
+        child.parentNode = null;
+      }
+      return child;
+    }
+    remove() {
+      if (this.parentNode) this.parentNode.removeChild(this);
+    }
+    attachShadow() {
+      const sr = new IdeChatMockNode('#shadow-root');
+      sr.host = this;
+      this.shadowRoot = sr;
+      return sr;
+    }
+    contains(other) {
+      let cur = other;
+      while (cur) {
+        if (cur === this) return true;
+        cur = cur.parentNode;
+      }
+      return false;
+    }
+    addEventListener(type, fn) {
+      if (!this._listeners.has(type)) this._listeners.set(type, []);
+      this._listeners.get(type).push(fn);
+    }
+    removeEventListener(type, fn) {
+      const arr = this._listeners.get(type);
+      if (!arr) return;
+      const i = arr.indexOf(fn);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    dispatchEvent(ev) {
+      for (const fn of [...(this._listeners.get(ev.type) || [])]) fn(ev);
+    }
+    getBoundingClientRect() {
+      if (this.id === 'ag-usage-monitor-capsule' || this.classList.contains('wm-capsule-btn')) {
+        return { left: 680, right: 830, top: 824, bottom: 850, width: 150, height: 26 };
+      }
+      return this._rect;
+    }
+    matches(sel) {
+      if (sel === 'button') return this.tagName === 'BUTTON';
+      if (sel === 'textarea') return this.tagName === 'TEXTAREA';
+      if (sel === '[contenteditable]') return this.hasAttribute('contenteditable');
+      if (sel === '[role="button"]') return this.getAttribute('role') === 'button';
+      if (sel === '[role="textbox"]') return this.getAttribute('role') === 'textbox';
+      if (sel === '[aria-haspopup]') return this.hasAttribute('aria-haspopup');
+      if (sel === '[data-lexical-editor]') return this.hasAttribute('data-lexical-editor');
+      if (sel.startsWith('.')) return this.classList.contains(sel.slice(1));
+      return false;
+    }
+    querySelectorAll(sel) {
+      const parts = sel.split(',').map((s) => s.trim()).filter(Boolean);
+      const out = [];
+      const walk = (n) => {
+        for (const c of n.children) {
+          if (parts.some((p) => c.matches(p))) out.push(c);
+          walk(c);
+        }
+      };
+      walk(this);
+      return out;
+    }
+    querySelector(sel) {
+      return this.querySelectorAll(sel)[0] || null;
+    }
+  }
+
+  const docRoot = new IdeChatMockNode('html', { left: 0, right: 980, top: 0, bottom: 900, width: 980, height: 900 });
+  docRoot.isDocumentRoot = true;
+  const head = new IdeChatMockNode('head');
+  const body = new IdeChatMockNode('body', { left: 0, right: 980, top: 0, bottom: 900, width: 980, height: 900 });
+  docRoot.appendChild(head);
+  docRoot.appendChild(body);
 
   // Header inside IDE chat pane (must NEVER be docked into inside extensionView iframe!)
-  const paneHeader = makeChatNode('header', { left: 0, right: 980, top: 0, bottom: 36, width: 980, height: 36 });
+  const paneHeader = new IdeChatMockNode('header', { left: 0, right: 980, top: 0, bottom: 36, width: 980, height: 36 });
   paneHeader.className = '@container/titlebar flex h-9 w-full items-center justify-between';
   body.appendChild(paneHeader);
 
   // Antigravity IDE Composer Card: outer role="button" focus wrapper + Lexical/Monaco editor + [+] [Gemini 4 Carbon High ^] ... [->]
-  const outerFocusCard = makeChatNode('div', { left: 130, right: 882, top: 770, bottom: 862, width: 752, height: 92 });
+  const outerFocusCard = new IdeChatMockNode('div', { left: 130, right: 882, top: 770, bottom: 862, width: 752, height: 92 });
   outerFocusCard.setAttribute('role', 'button');
-  const editorEl = makeChatNode('div', { left: 146, right: 866, top: 782, bottom: 816, width: 720, height: 34 });
+  const editorEl = new IdeChatMockNode('div', { left: 146, right: 866, top: 782, bottom: 816, width: 720, height: 34 });
   editorEl.setAttribute('contenteditable', 'true');
   editorEl.setAttribute('data-lexical-editor', 'true');
 
-  const toolbarRow = makeChatNode('div', { left: 146, right: 866, top: 822, bottom: 852, width: 720, height: 30 });
+  const toolbarRow = new IdeChatMockNode('div', { left: 146, right: 866, top: 822, bottom: 852, width: 720, height: 30 });
   toolbarRow.className = 'flex items-center justify-between';
-  const leftCluster = makeChatNode('div', { left: 146, right: 340, top: 822, bottom: 852, width: 194, height: 30 });
-  const plusBtn = makeChatNode('button', { left: 146, right: 172, top: 824, bottom: 850, width: 26, height: 26 });
+  const leftCluster = new IdeChatMockNode('div', { left: 146, right: 340, top: 822, bottom: 852, width: 194, height: 30 });
+  const plusBtn = new IdeChatMockNode('button', { left: 146, right: 172, top: 824, bottom: 850, width: 26, height: 26 });
   plusBtn.textContent = '+';
-  const modelBtn = makeChatNode('div', { left: 178, right: 336, top: 824, bottom: 850, width: 158, height: 26 });
+  const modelBtn = new IdeChatMockNode('div', { left: 178, right: 336, top: 824, bottom: 850, width: 158, height: 26 });
   modelBtn.setAttribute('aria-haspopup', 'menu');
   modelBtn.textContent = 'Gemini 4 Carbon High';
   leftCluster.appendChild(plusBtn);
   leftCluster.appendChild(modelBtn);
 
-  const rightCluster = makeChatNode('div', { left: 836, right: 866, top: 822, bottom: 852, width: 30, height: 30 });
-  const sendBtn = makeChatNode('button', { left: 838, right: 866, top: 823, bottom: 851, width: 28, height: 28 });
-  const arrowIcon = makeChatNode('span');
+  const rightCluster = new IdeChatMockNode('div', { left: 836, right: 866, top: 822, bottom: 852, width: 30, height: 30 });
+  const sendBtn = new IdeChatMockNode('button', { left: 838, right: 866, top: 823, bottom: 851, width: 28, height: 28 });
+  const arrowIcon = new IdeChatMockNode('span');
   arrowIcon.className = 'codicon codicon-arrow-right';
   arrowIcon.textContent = 'arrow_forward';
   sendBtn.appendChild(arrowIcon);
@@ -3677,6 +4425,36 @@ test('Antigravity IDE composer mount mode (输入框挂载) docks inside extensi
     enableWindowOverlay: true,
     showTopbarMultiSession: true,
     topbarCapsuleSlots: ['context', 'tps', 'quota_auto'],
+  };
+
+  const mockDoc = {
+    readyState: 'complete',
+    hidden: false,
+    documentElement: docRoot,
+    head,
+    body,
+    createElement: (tag) => new IdeChatMockNode(tag),
+    createElementNS: (_ns, tag) => new IdeChatMockNode(tag),
+    createTextNode: (txt) => {
+      const t = new IdeChatMockNode('#text');
+      t.textContent = String(txt);
+      return t;
+    },
+    getElementById: (id) => {
+      const walk = (n) => {
+        if (n.id === id) return n;
+        for (const c of n.children) {
+          const hit = walk(c);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      return walk(docRoot);
+    },
+    querySelector: (sel) => docRoot.querySelector(sel),
+    querySelectorAll: (sel) => docRoot.querySelectorAll(sel),
+    addEventListener() {},
+    removeEventListener() {},
   };
 
   const chatConvId = 'a4206937-54dd-4d4e-a161-813719bf7107';
@@ -4579,15 +5357,163 @@ test('v1.5 feedback E2E: sticky bridge port/token across hot-reloads, CDP->HTTP 
     modelBreakdown: [],
   });
 
-  const {
-    body,
-    document: mockDoc,
-  } = createMockDom({
-    resolveRect: (el) => {
-      const w = Number.parseFloat(el.style.width) || el.offsetWidth || 120;
-      return { left: 900, right: 900 + w, top: 8, bottom: 36, width: w, height: 28 };
-    },
-  });
+  function makeLiteElem(tag) {
+    const attrs = new Map();
+    const classes = new Set();
+    const styleProps = new Map();
+    const listeners = new Map();
+    let ownText = '';
+    const el = {
+      tagName: String(tag || 'div').toUpperCase(),
+      nodeType: 1,
+      id: '',
+      value: '',
+      dataset: {},
+      children: [],
+      parentNode: null,
+      parentElement: null,
+      shadowRoot: null,
+      clientWidth: 0,
+      offsetWidth: 0,
+      scrollWidth: 0,
+      get firstChild() { return el.children[0] || null; },
+      get lastChild() { return el.children[el.children.length - 1] || null; },
+      get textContent() {
+        if (el.children.length === 0) return ownText;
+        return el.children.map((c) => c.textContent ?? '').join('');
+      },
+      set textContent(v) {
+        el.children = [];
+        ownText = String(v ?? '');
+      },
+      style: {
+        width: '',
+        height: '',
+        maxHeight: '',
+        top: '',
+        left: '',
+        right: '',
+        display: '',
+        setProperty(k, v) { styleProps.set(k, String(v)); },
+        getPropertyValue(k) { return styleProps.get(k) || ''; },
+        removeProperty(k) { styleProps.delete(k); },
+      },
+      classList: {
+        add(...names) { for (const n of names) if (n) classes.add(n); },
+        remove(...names) { for (const n of names) classes.delete(n); },
+        toggle(n, force) {
+          const add = force === undefined ? !classes.has(n) : Boolean(force);
+          if (add) classes.add(n); else classes.delete(n);
+          return add;
+        },
+        contains(n) { return classes.has(n); },
+      },
+      get className() { return [...classes].join(' '); },
+      set className(v) {
+        classes.clear();
+        for (const p of String(v || '').split(/\s+/)) if (p) classes.add(p);
+      },
+      setAttribute(k, v) {
+        attrs.set(k, String(v));
+        if (k === 'id') el.id = String(v);
+        if (k === 'class') el.className = String(v);
+      },
+      getAttribute(k) { return attrs.has(k) ? attrs.get(k) : null; },
+      removeAttribute(k) { attrs.delete(k); },
+      hasAttribute(k) { return attrs.has(k); },
+      appendChild(child) {
+        if (!child) return child;
+        if (child.parentNode?.removeChild) child.parentNode.removeChild(child);
+        child.parentNode = el;
+        child.parentElement = el;
+        el.children.push(child);
+        return child;
+      },
+      insertBefore(child, ref) {
+        if (!ref) return el.appendChild(child);
+        if (child.parentNode?.removeChild) child.parentNode.removeChild(child);
+        const idx = el.children.indexOf(ref);
+        child.parentNode = el;
+        child.parentElement = el;
+        if (idx >= 0) el.children.splice(idx, 0, child);
+        else el.children.push(child);
+        return child;
+      },
+      removeChild(child) {
+        const idx = el.children.indexOf(child);
+        if (idx >= 0) {
+          el.children.splice(idx, 1);
+          child.parentNode = null;
+          child.parentElement = null;
+        }
+        return child;
+      },
+      remove() {
+        if (el.parentNode?.removeChild) el.parentNode.removeChild(el);
+      },
+      contains(target) {
+        let cur = target;
+        while (cur) {
+          if (cur === el) return true;
+          cur = cur.parentNode;
+        }
+        return false;
+      },
+      attachShadow() {
+        const sr = makeLiteElem('shadow-root');
+        el.shadowRoot = sr;
+        return sr;
+      },
+      addEventListener(type, fn) {
+        if (!listeners.has(type)) listeners.set(type, []);
+        listeners.get(type).push(fn);
+      },
+      removeEventListener() {},
+      dispatchEvent(ev) {
+        for (const fn of listeners.get(ev.type) || []) fn(ev);
+      },
+      getBoundingClientRect() {
+        const w = Number.parseFloat(el.style.width) || el.offsetWidth || 120;
+        return { left: 900, right: 900 + w, top: 8, bottom: 36, width: w, height: 28 };
+      },
+      querySelectorAll(sel) {
+        const out = [];
+        const parts = String(sel).trim().split(/\s+/);
+        const matchesSimple = (node, s) => {
+          if (s.startsWith('#')) return node.id === s.slice(1);
+          if (s.startsWith('.')) {
+            return s.slice(1).split('.').filter(Boolean).every((c) => node.classList.contains(c));
+          }
+          return node.tagName.toLowerCase() === s.toLowerCase();
+        };
+        const matchesChain = (node, idx) => {
+          if (!matchesSimple(node, parts[idx])) return false;
+          if (idx === 0) return true;
+          let p = node.parentElement;
+          while (p) {
+            if (matchesChain(p, idx - 1)) return true;
+            p = p.parentElement;
+          }
+          return false;
+        };
+        const walk = (root) => {
+          for (const ch of root.children || []) {
+            if (matchesChain(ch, parts.length - 1)) out.push(ch);
+            walk(ch);
+          }
+        };
+        walk(el);
+        return out;
+      },
+      querySelector(sel) {
+        return el.querySelectorAll(sel)[0] || null;
+      },
+    };
+    return el;
+  }
+
+  const body = makeLiteElem('body');
+  const head = makeLiteElem('head');
   let failHttpOnce = false;
   const mockWin = {
     innerWidth: 1280,
@@ -4613,6 +5539,21 @@ test('v1.5 feedback E2E: sticky bridge port/token across hot-reloads, CDP->HTTP 
       }
       return { ok: true, status: 200, json: async () => buildMockPayload() };
     },
+  };
+  const mockDoc = {
+    hidden: false,
+    body,
+    head,
+    documentElement: makeLiteElem('html'),
+    activeElement: null,
+    createElement: (t) => makeLiteElem(t),
+    createElementNS: (_ns, t) => makeLiteElem(t),
+    createTextNode: (txt) => ({ nodeType: 3, textContent: String(txt ?? ''), parentNode: null }),
+    getElementById: (id) => body.children.find((c) => c.id === id) || null,
+    querySelector: (s) => body.querySelector(s),
+    querySelectorAll: (s) => body.querySelectorAll(s),
+    addEventListener() {},
+    removeEventListener() {},
   };
 
   const sandbox = {
@@ -4715,663 +5656,5 @@ test('v1.5 feedback E2E: sticky bridge port/token across hot-reloads, CDP->HTTP 
     assert.equal(mockWin.__AGUsageMonitorBridge.transportMode, 'http', 'updateBridge immediately heals transportMode back to http');
   } finally {
     ov.dispose();
-  }
-});
-
-test('WindowOverlayShell macOS (darwin) adaptation: sets data-os="mac", uses 12px fixed right fallback, and reserves 80px for traffic lights', async () => {
-  const panelDir = path.resolve(import.meta.dirname, '..');
-  const appJs = fs.readFileSync(path.join(panelDir, 'app.js'), 'utf8');
-  const stylesCss = fs.readFileSync(path.join(panelDir, 'styles.css'), 'utf8');
-  assert.match(stylesCss, /:host\(\.wm-capsule-host\[data-dock="fixed"\]\[data-os="mac"\]\)\s*\{\s*right:\s*12px;/);
-
-  function runOverlayForPlatform(platformKey, { withTitlebar = false, auxLeft = 0, winWidth = 1280 } = {}) {
-    const {
-      body,
-      document: mockDoc,
-      makeElement: makeNode,
-    } = createMockDom({
-      defaultRect: { left: 0, right: 64, top: 6, bottom: 34, width: 64, height: 28 },
-    });
-
-    if (withTitlebar) {
-      const tb = makeNode('div');
-      tb.className = 'flex @container/titlebar';
-      tb.setRect({ left: 0, right: winWidth, top: 0, bottom: 36, width: winWidth, height: 36 });
-      const titleGroup = makeNode('div');
-      const rightGroup = makeNode('div');
-      rightGroup.className = 'shrink-0';
-      const siblingBtn = makeNode('button');
-      siblingBtn.setRect({ left: winWidth - 56, right: winWidth, top: 4, bottom: 32, width: 56, height: 28 });
-      rightGroup.appendChild(siblingBtn);
-      tb.appendChild(titleGroup);
-      tb.appendChild(rightGroup);
-      body.appendChild(tb);
-    } else if (auxLeft > 0) {
-      const auxBtn = makeNode('button');
-      auxBtn.setAttribute('data-testid', 'toggle-aux-sidebar');
-      auxBtn.setRect({ left: auxLeft, right: auxLeft + 28, top: 8, bottom: 34, width: 28, height: 26 });
-      body.appendChild(auxBtn);
-    }
-
-    const payload = {
-      timestamp: '2026-11-17T00:00:00Z',
-      hostPlatform: platformKey,
-      settings: { windowMountMode: 'dual', enableWindowOverlay: true, showTopbarMultiSession: true, topbarCapsuleSlots: ['tps', 'ttft', 'context'] },
-      cloudStatus: { updateAvailable: false },
-      account: { planName: 'Pro' },
-      runningConversations: [],
-      conversations: [],
-      activeConversation: { cascadeId: '11111111-2222-3333-4444-555555555555', stepCount: 1, context: { totalTokens: 10000, limitTokens: 256000 } },
-      quotas: { pools: [] },
-    };
-
-    const mockWin = {
-      innerWidth: winWidth,
-      innerHeight: 800,
-      location: { pathname: '/c/11111111-2222-3333-4444-555555555555', search: '' },
-      __AGUsageMonitorBridge: {
-        port: 43111,
-        token: 'c'.repeat(64),
-        bundleVersion: 'ver-mac',
-        platform: platformKey,
-        stylesCss,
-        initialTelemetry: payload,
-      },
-      addEventListener() {},
-      removeEventListener() {},
-      getComputedStyle: () => ({ paddingRight: '8px', getPropertyValue: () => '' }),
-      fetch: async () => ({ ok: true, status: 200, json: async () => payload }),
-    };
-    const sb = {
-      window: mockWin,
-      document: mockDoc,
-      navigator: { language: 'zh-CN', platform: platformKey === 'darwin' ? 'MacIntel' : 'Win32' },
-      URLSearchParams,
-      AbortController,
-      queueMicrotask,
-      requestAnimationFrame: (fn) => setTimeout(fn, 0),
-      cancelAnimationFrame: clearTimeout,
-      setTimeout,
-      clearTimeout,
-      setInterval,
-      clearInterval,
-      Promise,
-      Math,
-      Date,
-      JSON,
-      Number,
-      String,
-      Boolean,
-      Array,
-      Object,
-      Map,
-      Set,
-      RegExp,
-      Error,
-      TypeError,
-      parseFloat,
-      parseInt,
-      isNaN,
-      Infinity,
-    };
-    sb.globalThis = sb;
-    vm.runInNewContext(appJs, sb);
-    const cap = body._foundCap || (function findCap(n) {
-      if (n.id === 'ag-usage-monitor-capsule') return n;
-      for (const c of n.children || []) { const r = findCap(c); if (r) return r; }
-      return null;
-    })(body);
-    return { ov: mockWin.__AGUsageMonitorOverlay, cap };
-  }
-
-  // 1. Fixed fallback without native anchor: macOS uses 12px right inset vs Windows 144px window-controls reserve
-  const macFixed = runOverlayForPlatform('darwin');
-  const winFixed = runOverlayForPlatform('win32');
-  try {
-    assert.equal(macFixed.cap.getAttribute('data-os'), 'mac');
-    assert.equal(macFixed.cap.style.right, '12px');
-    assert.equal(winFixed.cap.getAttribute('data-os'), 'default');
-    assert.equal(winFixed.cap.style.right, '144px');
-  } finally {
-    macFixed.ov.dispose();
-    winFixed.ov.dispose();
-  }
-
-  // 2. Fixed fallback with native top-right button at x=1230 on 1280px viewport: macOS hugs button at 56px instead of jumping to 144px
-  const macAnchored = runOverlayForPlatform('darwin', { auxLeft: 1230, winWidth: 1280 });
-  try {
-    assert.equal(macAnchored.cap.style.right, '56px');
-  } finally {
-    macAnchored.ov.dispose();
-  }
-
-  // 3. Flow titlebar narrow window (610px): macOS 80px traffic-light reserve retains 'wide' capsule while Windows 168px reserve collapses
-  const macNarrowFlow = runOverlayForPlatform('darwin', { withTitlebar: true, winWidth: 610 });
-  const winNarrowFlow = runOverlayForPlatform('win32', { withTitlebar: true, winWidth: 610 });
-  try {
-    assert.equal(macNarrowFlow.cap.getAttribute('data-layout'), 'wide');
-    assert.notEqual(winNarrowFlow.cap.getAttribute('data-layout'), 'wide');
-  } finally {
-    macNarrowFlow.ov.dispose();
-    winNarrowFlow.ov.dispose();
-  }
-});
-
-test('Issue #26: Antigravity Desktop 2.33.0+ automatic shortcut/launcher provisioning, out-of-job host relaunch, and global/settings BridgeStatusNotice UI', async () => {
-  // 1. Fresh IDE argv.json remains strict-JSON parseable
-  const fresh = ensureRemoteDebuggingInArgvText('');
-  assert.deepEqual(JSON.parse(fresh.text), { 'remote-debugging-port': '0' });
-
-  // 2. Pure argument / HKCU Run / Linux .desktop patchers & non-destructive rollback
-  const addedEmpty = ensureRemoteDebugFlagInArgs('', { enabled: true });
-  assert.equal(addedEmpty.changed, true);
-  assert.equal(addedEmpty.args, '--remote-debugging-port=0');
-
-  const preservedCustom = ensureRemoteDebugFlagInArgs('--foo --remote-debugging-port=9229', {
-    enabled: true,
-  });
-  assert.equal(preservedCustom.changed, false);
-  assert.equal(preservedCustom.alreadyConfigured, true);
-
-  const preservedCustomOnDisable = ensureRemoteDebugFlagInArgs(
-    '--foo --remote-debugging-port=9229',
-    { enabled: false }
-  );
-  assert.equal(preservedCustomOnDisable.changed, false);
-  assert.equal(preservedCustomOnDisable.configured, true);
-
-  const strippedManaged = ensureRemoteDebugFlagInArgs('--hidden --remote-debugging-port=0 --bar', {
-    enabled: false,
-  });
-  assert.equal(strippedManaged.changed, true);
-  assert.equal(strippedManaged.removed, true);
-  assert.equal(strippedManaged.args, '--hidden --bar');
-
-  const winRunDesktop = patchWindowsRunRegistryCommand(
-    '"C:\\Users\\Dev\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" --hidden',
-    { enabled: true }
-  );
-  assert.equal(winRunDesktop.matched, true);
-  assert.equal(winRunDesktop.changed, true);
-  assert.equal(
-    winRunDesktop.value,
-    '"C:\\Users\\Dev\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" --hidden --remote-debugging-port=0'
-  );
-  const winRunRollback = patchWindowsRunRegistryCommand(winRunDesktop.value, { enabled: false });
-  assert.equal(winRunRollback.changed, true);
-  assert.equal(
-    winRunRollback.value,
-    '"C:\\Users\\Dev\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" --hidden'
-  );
-  const winRunIdeIgnored = patchWindowsRunRegistryCommand(
-    '"C:\\Program Files\\Antigravity IDE\\Antigravity IDE.exe"',
-    { enabled: true }
-  );
-  assert.equal(winRunIdeIgnored.matched, false);
-
-  const linuxDesktopRaw = [
-    '[Desktop Entry]',
-    'Name=Antigravity',
-    'Exec=/opt/Antigravity/antigravity %U',
-    'Type=Application',
-    '',
-  ].join('\n');
-  const linuxPatched = patchLinuxDesktopEntryText(linuxDesktopRaw, { enabled: true });
-  assert.equal(linuxPatched.matched, true);
-  assert.equal(linuxPatched.changed, true);
-  assert.match(linuxPatched.text, /Exec=\/opt\/Antigravity\/antigravity --remote-debugging-port=0 %U/);
-  const linuxReverted = patchLinuxDesktopEntryText(linuxPatched.text, { enabled: false });
-  assert.equal(linuxReverted.changed, true);
-  assert.equal(linuxReverted.text, linuxDesktopRaw);
-
-  // 3. Host executable resolution from ANTIGRAVITY_AGENTAPI_EXE & clean relaunch env sanitization
-  const resolvedWinHost = resolveDesktopHostExecutable({
-    env: {
-      ANTIGRAVITY_AGENTAPI_EXE:
-        'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Antigravity\\resources\\bin\\language_server_windows_x64.exe',
-    },
-    platform: 'win32',
-    homeDir: 'C:\\Users\\Administrator',
-    existsFn: (p) =>
-      p.replace(/\//g, '\\') ===
-      'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe',
-  });
-  assert.equal(resolvedWinHost.found, true);
-  assert.equal(resolvedWinHost.kind, 'desktop');
-  assert.equal(
-    resolvedWinHost.executablePath.replace(/\//g, '\\'),
-    'C:\\Users\\Administrator\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe'
-  );
-
-  const resolvedMacHost = resolveDesktopHostExecutable({
-    env: {
-      ANTIGRAVITY_AGENTAPI_EXE:
-        '/Applications/Antigravity.app/Contents/Resources/bin/language_server_darwin_arm64',
-    },
-    platform: 'darwin',
-    homeDir: '/Users/dev',
-    existsFn: (p) =>
-      p === '/Applications/Antigravity.app' ||
-      p === '/Applications/Antigravity.app/Contents/MacOS/Antigravity',
-  });
-  assert.equal(resolvedMacHost.found, true);
-  assert.equal(resolvedMacHost.appBundlePath, '/Applications/Antigravity.app');
-
-  const sanitizedEnv = buildSanitizedDesktopRelaunchEnv({
-    PATH: 'C:\\Windows\\System32',
-    USERPROFILE: 'C:\\Users\\Administrator',
-    ANTIGRAVITY_LS_ADDRESS: 'localhost:13088',
-    ANTIGRAVITY_CSRF_TOKEN: 'secret',
-    CHROME_DEVTOOLS_MCP_JS: 'C:\\foo.js',
-    USAGE_MONITOR_HOST_PPID: '123',
-    ELECTRON_RUN_AS_NODE: '1',
-    NODE_OPTIONS: '--inspect',
-  });
-  assert.deepEqual(sanitizedEnv, {
-    PATH: 'C:\\Windows\\System32',
-    USERPROFILE: 'C:\\Users\\Administrator',
-  });
-
-  // 4. Linux .desktop provisioning on real temp dir + Windows shortcut provisioning + stale DevToolsActivePort (cdp_unreachable) + relaunch dispatch
-  const simTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-233-auto-'));
-  const homeDir = path.join(simTmp, 'home');
-  const roamingDir = path.join(homeDir, 'AppData', 'Roaming');
-  const localDir = path.join(homeDir, 'AppData', 'Local');
-  const desktopRoamingDir = path.join(roamingDir, 'Antigravity');
-  const fakeExe = path.join(localDir, 'Programs', 'Antigravity', 'Antigravity.exe');
-  const leaseFile = path.join(simTmp, 'window-bridge-lease.json');
-  fs.mkdirSync(desktopRoamingDir, { recursive: true });
-  fs.mkdirSync(path.dirname(fakeExe), { recursive: true });
-  fs.writeFileSync(fakeExe, '', 'utf8');
-
-  // Simulate stale DevToolsActivePort left behind by 2.32.x pointing to a closed port
-  const stalePortServer = http.createServer();
-  await new Promise((r) => stalePortServer.listen(0, '127.0.0.1', r));
-  const deadPort = stalePortServer.address().port;
-  await new Promise((r) => stalePortServer.close(r));
-  const stalePortFile = path.join(desktopRoamingDir, 'DevToolsActivePort');
-  fs.writeFileSync(stalePortFile, `${deadPort}\n/devtools/browser/stale-232\n`, 'utf8');
-
-  const simEnv = {
-    PATH: 'C:\\Windows\\System32',
-    APPDATA: roamingDir,
-    LOCALAPPDATA: localDir,
-    ANTIGRAVITY_AGENTAPI_EXE: path.join(
-      localDir,
-      'Programs',
-      'Antigravity',
-      'resources',
-      'bin',
-      'language_server_windows_x64.exe'
-    ),
-    ANTIGRAVITY_LS_ADDRESS: 'localhost:13088',
-  };
-
-  try {
-    // Verify Linux XDG .desktop copy + autostart provisioning in isolated temp home
-    const linuxDataHome = path.join(simTmp, 'xdg-data');
-    const linuxCfgHome = path.join(simTmp, 'xdg-config');
-    const linuxAutostart = path.join(linuxCfgHome, 'autostart', 'antigravity.desktop');
-    fs.mkdirSync(path.dirname(linuxAutostart), { recursive: true });
-    fs.writeFileSync(linuxAutostart, linuxDesktopRaw, 'utf8');
-    const sysDesktopPath = '/usr/share/applications/antigravity.desktop';
-    const linuxProv = await ensureDesktopLaunchEntriesConfigured({
-      enabled: true,
-      env: { XDG_DATA_HOME: linuxDataHome, XDG_CONFIG_HOME: linuxCfgHome },
-      platform: 'linux',
-      homeDir,
-      allowInTest: true,
-      fsOps: {
-        existsFn: (p) => (p === sysDesktopPath ? true : fs.existsSync(p)),
-        readFn: (p, enc) => (p === sysDesktopPath ? linuxDesktopRaw : fs.readFileSync(p, enc)),
-        writeFn: fs.writeFileSync,
-        mkdirFn: fs.mkdirSync,
-        renameFn: fs.renameSync,
-        unlinkFn: fs.unlinkSync,
-      },
-    });
-    assert.equal(linuxProv.updated, true);
-    assert.equal(linuxProv.configured, true);
-    assert.equal(linuxProv.updatedPaths.length, 2);
-    assert.match(
-      fs.readFileSync(path.join(linuxDataHome, 'applications', 'antigravity.desktop'), 'utf8'),
-      /--remote-debugging-port=0 %U/
-    );
-
-    // Verify Windows shortcut auto-provisioning + stale port (`cdp_unreachable`) status reporting + clean rollback on disable
-    const winPsCalls = [];
-    const mockWinExec = async (file, args, opts) => {
-      winPsCalls.push({ file, args, env: opts?.env });
-      const enabledFlag = opts?.env?.AGY_LAUNCH_ENABLED === '1';
-      return JSON.stringify({
-        ok: true,
-        updatedPaths: enabledFlag
-          ? ['C:\\Users\\Admin\\Desktop\\Antigravity.lnk', 'C:\\TaskBar\\Antigravity.lnk']
-          : ['C:\\Users\\Admin\\Desktop\\Antigravity.lnk'],
-        configuredPaths: enabledFlag
-          ? ['C:\\Users\\Admin\\Desktop\\Antigravity.lnk', 'C:\\TaskBar\\Antigravity.lnk']
-          : [],
-      });
-    };
-
-    let currentMountSettings = {
-      windowMountMode: 'dual',
-      enableWindowOverlay: true,
-      modelContextWindows: {},
-    };
-    const ctrlWin = createWindowBridgeController({
-      handleApiRequest: async () => ({ status: 200, body: '{}' }),
-      readAssetFn: async () => '',
-      getSettingsFn: () => currentMountSettings,
-      getBundleVersionFn: () => '201',
-      env: simEnv,
-      platform: 'win32',
-      homeDir,
-      leaseFilePath: leaseFile,
-      autoConfigureIdeArgv: true,
-      launcherExecFileFn: mockWinExec,
-      allowDesktopLauncherInTest: true,
-    });
-
-    const syncRes = await ctrlWin.syncAllWindows();
-    assert.equal(syncRes.reason, 'cdp_unreachable', 'Stale 2.32.x port surfaces cdp_unreachable');
-    const stWin = ctrlWin.getBridgeStatus();
-    assert.equal(stWin.state, 'cdp_unreachable');
-    assert.equal(stWin.argvUpdatedThisBoot, true);
-    assert.equal(stWin.launcherConfigured, true);
-    assert.equal(stWin.canRelaunch, true);
-    assert.equal(winPsCalls.length, 1);
-    assert.equal(winPsCalls[0].env.AGY_LAUNCH_ENABLED, '1');
-
-    // Disabling overlay (Sidebar Only) cleanly triggers shortcut flag rollback
-    currentMountSettings = {
-      windowMountMode: 'sidebar',
-      enableWindowOverlay: false,
-      modelContextWindows: {},
-    };
-    await ctrlWin.notifySettingChanged(false);
-    await new Promise((r) => setTimeout(r, 10));
-    assert.equal(winPsCalls.length, 2);
-    assert.equal(winPsCalls[1].env.AGY_LAUNCH_ENABLED, '0');
-    await ctrlWin.stop();
-
-    // Verify Windows out-of-job Shell.Application relaunch payload (.ps1 file with UTF-8 BOM) & macOS open -a relaunch
-    let capturedRelaunchEnv = null;
-    let capturedRelaunchArgs = null;
-    const relaunchWinRes = await triggerDesktopHostRelaunch({
-      env: { ...simEnv, TEMP: simTmp },
-      platform: 'win32',
-      homeDir,
-      stalePortFiles: [stalePortFile],
-      allowInTest: true,
-      execFileFn: async (_file, args, opts) => {
-        capturedRelaunchArgs = args;
-        capturedRelaunchEnv = opts?.env;
-        return '{"ok":true,"method":"shell_application"}';
-      },
-    });
-    assert.equal(relaunchWinRes.ok, true);
-    assert.equal(relaunchWinRes.relaunching, true);
-    assert.equal(capturedRelaunchArgs.includes('-Sta'), true, 'Forces STA for Shell.Application COM');
-    assert.equal(capturedRelaunchEnv.ANTIGRAVITY_LS_ADDRESS, undefined, 'Strips host LS env');
-    assert.equal(fs.existsSync(capturedRelaunchEnv.AGY_RELAUNCH_PS1), true);
-    const writtenPs1 = fs.readFileSync(capturedRelaunchEnv.AGY_RELAUNCH_PS1, 'utf8');
-    assert.equal(writtenPs1.startsWith('\uFEFF'), true, 'Writes UTF-8 BOM for Windows PowerShell 5.1');
-    assert.match(writtenPs1, /--remote-debugging-port=0/);
-    assert.ok(writtenPs1.includes(stalePortFile));
-
-    // Verify dynamic running-process path discovery when installed on custom non-default drive (e.g. D:\Apps\Antigravity)
-    const customDriveRes = await triggerDesktopHostRelaunch({
-      env: { TEMP: simTmp },
-      platform: 'win32',
-      homeDir: path.join(simTmp, 'empty-home'),
-      allowInTest: true,
-      existsFn: () => false,
-      execFileFn: async (_file, args) => {
-        const cmdStr = args.join(' ');
-        if (cmdStr.includes('Get-Process')) {
-          return JSON.stringify({ path: 'D:\\Apps\\Antigravity\\Antigravity.exe', name: 'Antigravity' });
-        }
-        return '{"ok":true,"method":"shell_application"}';
-      },
-    });
-    assert.equal(customDriveRes.ok, true);
-    assert.equal(customDriveRes.executablePath, 'D:\\Apps\\Antigravity\\Antigravity.exe');
-
-    let macSpawnArgs = null;
-    const relaunchMacRes = await triggerDesktopHostRelaunch({
-      env: {
-        PATH: '/usr/bin:/bin',
-        ANTIGRAVITY_AGENTAPI_EXE:
-          '/Applications/Antigravity.app/Contents/Resources/bin/language_server_darwin_arm64',
-      },
-      platform: 'darwin',
-      homeDir: '/Users/dev',
-      stalePortFiles: ['/Users/dev/Library/Application Support/Antigravity/DevToolsActivePort'],
-      allowInTest: true,
-      existsFn: (p) => p === '/Applications/Antigravity.app',
-      spawnFn: async (file, args, opts) => {
-        macSpawnArgs = { file, args, env: opts?.env };
-        return { pid: 4321 };
-      },
-    });
-    assert.equal(relaunchMacRes.ok, true);
-    assert.equal(macSpawnArgs.env.AGY_RELAUNCH_APP, '/Applications/Antigravity.app');
-    assert.match(macSpawnArgs.args[1], /open -a "\$AGY_RELAUNCH_APP" --args --remote-debugging-port=0/);
-
-    // Explicit ANTIGRAVITY_DEVTOOLS_PORT fallback still works seamlessly
-    const innerScriptCheck = buildWindowsRelaunchInnerScript(fakeExe, [stalePortFile], 'desktop');
-    assert.match(innerScriptCheck, /CloseMainWindow/);
-    assert.match(innerScriptCheck, /Stop-Process/);
-  } finally {
-    fs.rmSync(simTmp, { recursive: true, force: true });
-  }
-
-  // 5. Verify zh-CN / en-US i18n parity & BridgeStatusNotice one-click relaunch + dismiss + copy behavior
-  const [
-    { I18N_MESSAGES_ZH_CN },
-    { I18N_MESSAGES_EN_US },
-    { setI18nLanguage },
-    { SettingsStructureTab },
-    { SettingsOtherTab },
-    { BridgeStatusNotice },
-  ] = await Promise.all([
-    import('../src/i18n/zh-CN.js'),
-    import('../src/i18n/en-US.js'),
-    import('../src/i18n/index.js'),
-    import('../src/views/settings/SettingsStructureTab.js'),
-    import('../src/views/settings/SettingsOtherTab.js'),
-    import('../src/components/settings/BridgeStatusNotice.js'),
-  ]);
-
-  assert.deepEqual(
-    Object.keys(I18N_MESSAGES_ZH_CN).sort(),
-    Object.keys(I18N_MESSAGES_EN_US).sort()
-  );
-
-  const { document: mockDoc } = createMockDom();
-  const prevDoc = globalThis.document;
-  const prevNav = globalThis.navigator;
-  const prevFetch = globalThis.fetch;
-  let copiedClipboardText = '';
-  const fetchedUrls = [];
-  globalThis.document = mockDoc;
-  globalThis.fetch = async (url, opts) => {
-    fetchedUrls.push({ url: String(url), method: opts?.method || 'GET' });
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({ ok: true, relaunching: true }),
-      text: async () => JSON.stringify({ ok: true, relaunching: true }),
-    };
-  };
-  Object.defineProperty(globalThis, 'navigator', {
-    value: {
-      clipboard: {
-        writeText: async (txt) => {
-          copiedClipboardText = txt;
-        },
-      },
-    },
-    configurable: true,
-  });
-
-  try {
-    setI18nLanguage('zh-CN');
-    const strTab = SettingsStructureTab({});
-    const noticeEl = strTab.refs.mountBridgeNotice.el;
-    assert.equal(noticeEl.hasAttribute('hidden'), true, 'Hidden before bridge status arrives');
-
-    // Stale DevToolsActivePort (`cdp_unreachable`) with auto-patched shortcuts -> shows blue `.is-restart` + 1-click relaunch button!
-    strTab.refs.renderSettings(
-      { windowMountMode: 'dual', enableWindowOverlay: true },
-      {
-        state: 'cdp_unreachable',
-        argvUpdatedThisBoot: false,
-        argvConfigured: true,
-        launcherConfigured: true,
-        canRelaunch: true,
-      },
-      'win32'
-    );
-    assert.equal(noticeEl.hasAttribute('hidden'), false);
-    assert.equal(noticeEl.classList.contains('is-restart'), true);
-    assert.match(noticeEl.textContent, /已自动补齐启动参数/);
-    assert.equal(
-      strTab.refs.mountBridgeNotice.refs.relaunchBtnEl.hasAttribute('hidden'),
-      false
-    );
-
-    // Click 1-click relaunch button -> POST /api/bridge/relaunch & shows "正在重启客户端..."
-    strTab.refs.mountBridgeNotice.refs.relaunchBtnEl.dispatchEvent({ type: 'click' });
-    await new Promise((r) => setTimeout(r, 0));
-    assert.equal(
-      fetchedUrls.some((u) => u.url.endsWith('/api/bridge/relaunch') && u.method === 'POST'),
-      true
-    );
-    assert.match(strTab.refs.mountBridgeNotice.refs.relaunchBtnEl.textContent, /正在重启客户端/);
-
-    // macOS unconfigured state -> `.is-warn` with 1-click relaunch + copy button
-    strTab.refs.renderSettings(
-      { windowMountMode: 'dual', enableWindowOverlay: true },
-      {
-        state: 'no_devtools_port',
-        argvUpdatedThisBoot: false,
-        argvConfigured: false,
-        launcherConfigured: false,
-        canRelaunch: true,
-      },
-      'darwin'
-    );
-    assert.equal(noticeEl.classList.contains('is-warn'), true);
-    assert.match(noticeEl.textContent, /open -a "Antigravity" --args --remote-debugging-port=0/);
-
-    strTab.refs.mountBridgeNotice.refs.copyBtnEl.dispatchEvent({ type: 'click' });
-    await new Promise((r) => setTimeout(r, 0));
-    assert.equal(copiedClipboardText, '--remote-debugging-port=0');
-    assert.match(strTab.refs.mountBridgeNotice.refs.copyBtnEl.textContent, /已复制/);
-
-    // Dismissible global banner hides on dismiss click and resets once state becomes 'active'
-    const globalBanner = BridgeStatusNotice({ dismissible: true });
-    globalBanner.refs.update({
-      visible: true,
-      windowBridge: { state: 'no_devtools_port', launcherConfigured: true, canRelaunch: true },
-      hostPlatform: 'win32',
-    });
-    assert.equal(globalBanner.el.hasAttribute('hidden'), false);
-    globalBanner.refs.dismissBtnEl.dispatchEvent({ type: 'click' });
-    assert.equal(globalBanner.el.hasAttribute('hidden'), true);
-    globalBanner.refs.update({
-      visible: true,
-      windowBridge: { state: 'active', launcherConfigured: true, canRelaunch: true },
-      hostPlatform: 'win32',
-    });
-    globalBanner.refs.update({
-      visible: true,
-      windowBridge: { state: 'no_devtools_port', launcherConfigured: true, canRelaunch: true },
-      hostPlatform: 'win32',
-    });
-    assert.equal(globalBanner.el.hasAttribute('hidden'), false, 'Re-armed after active cycle');
-
-    // English localization check
-    setI18nLanguage('en-US');
-    strTab.refs.refreshLabels();
-    assert.match(noticeEl.textContent, /Local Debug Port Missing/);
-
-    // Switching to Sidebar Only hides notice immediately
-    strTab.refs.renderSettings(
-      { windowMountMode: 'sidebar', enableWindowOverlay: false },
-      { state: 'no_devtools_port', launcherConfigured: true, canRelaunch: true },
-      'win32'
-    );
-    assert.equal(noticeEl.hasAttribute('hidden'), true);
-
-    // SettingsOtherTab context window override notice & pending-restart meta state (Issue #27)
-    setI18nLanguage('zh-CN');
-    const othTab = SettingsOtherTab({ onLayoutChange: () => {} });
-    const ctxNoticeEl = othTab.refs.ctxBridgeNotice.el;
-    const mockCtxModels = [
-      {
-        id: 'model:gemini-4-carbon',
-        label: 'Gemini 4 Carbon',
-        capacity: 786432,
-        members: ['MODEL_PLACEHOLDER_M427'],
-        options: [{ name: '256000', tokens: 256000 }, { name: '512000', tokens: 512000 }],
-      },
-    ];
-
-    // Locked risk mask -> notice stays hidden
-    othTab.refs.renderSettings(
-      { contextWindowRiskAccepted: false, modelContextWindows: {} },
-      mockCtxModels,
-      { state: 'no_devtools_port', launcherConfigured: true, canRelaunch: true },
-      'win32'
-    );
-    assert.equal(ctxNoticeEl.hasAttribute('hidden'), true);
-
-    // Unlocked + no_devtools_port -> notice immediately visible AND saved option meta shows "待重启生效" instead of "已设置"
-    othTab.refs.renderSettings(
-      {
-        contextWindowRiskAccepted: true,
-        modelContextWindows: { 'model:gemini-4-carbon': '256000' },
-      },
-      mockCtxModels,
-      { state: 'no_devtools_port', launcherConfigured: true, canRelaunch: true },
-      'win32'
-    );
-    assert.equal(ctxNoticeEl.hasAttribute('hidden'), false);
-    assert.match(ctxNoticeEl.textContent, /激活上下文覆写/);
-    othTab.refs.ctxModelSelect.refs.triggerBtn.dispatchEvent({
-      type: 'click',
-      stopPropagation() {},
-    });
-    assert.match(
-      othTab.refs.ctxModelSelect.refs.menuEl.textContent,
-      /256,000 token · 待重启生效/
-    );
-
-    othTab.refs.renderSettings(
-      {
-        contextWindowRiskAccepted: true,
-        modelContextWindows: { 'model:gemini-4-carbon': '256000' },
-      },
-      mockCtxModels,
-      { state: 'active', aliveCount: 1, launcherConfigured: true, canRelaunch: true },
-      'win32'
-    );
-    assert.equal(ctxNoticeEl.hasAttribute('hidden'), true);
-    assert.match(othTab.refs.ctxModelSelect.refs.menuEl.textContent, /256,000 token · 已设置/);
-
-    globalBanner.destroy();
-    strTab.destroy();
-    othTab.destroy();
-  } finally {
-    setI18nLanguage('zh-CN');
-    globalThis.document = prevDoc;
-    globalThis.fetch = prevFetch;
-    Object.defineProperty(globalThis, 'navigator', {
-      value: prevNav,
-      configurable: true,
-    });
   }
 });

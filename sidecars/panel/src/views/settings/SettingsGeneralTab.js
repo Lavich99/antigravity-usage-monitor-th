@@ -1,6 +1,6 @@
 /**
- * @fileoverview Preferences Tab 1: `SettingsGeneralTab.js` ("常规").
- * Manages UI Language (`zh-CN` / `en-US` / `auto`), Theme Accent (`host` + 6 swatches),
+ * @fileoverview Preferences Tab 1: `SettingsGeneralTab.js` (" ").
+ * Manages UI Language (`th-TH` / `en-US` / `auto`), Theme Accent (`host` + 6 swatches),
  * Panel Font Scale (`sm` / `md` / `lg` / `xl`), Pricing Sync, and Plugin Updates.
  */
 
@@ -24,7 +24,7 @@ import { SegmentedControl } from '../../components/ui/SegmentedControl.js';
 
 function getLanguageOptions() {
   return [
-    { value: 'zh-CN', label: t('settings.gen.langZh') },
+    { value: 'th-TH', label: t('settings.gen.langTh') },
     { value: 'en-US', label: t('settings.gen.langEn') },
     { value: 'auto', label: t('settings.gen.langAuto') },
   ];
@@ -63,10 +63,10 @@ function formatCloudSyncTimeText(tsMs, updatedAt) {
 export const SettingsGeneralTab = defineComponent({
   name: 'SettingsGeneralTab',
   setup({ props, onCleanup }) {
-    let draftLanguage = 'zh-CN';
+    let draftLanguage = 'th-TH';
     let draftThemeAccent = 'host';
-    let draftFontScale = 'md';
-    let draftPluginUpdateMode = 'manual';
+    let draftFontScale = 'sm';
+    let draftPluginUpdateMode = 'off';
     let latestSettings = null;
     let latestCloudStatus = null;
     let appearanceTimer = null;
@@ -111,7 +111,7 @@ export const SettingsGeneralTab = defineComponent({
       }
     }
 
-    // --- Card 1: 界面与外观 ---
+    // --- Card 1: ---
     const appearanceTitleEl = h('span', { text: t('settings.gen.appearanceTitle') });
     const langLabelEl = h('span', { className: 'form-label', text: t('settings.gen.language') });
     const accentLabelEl = h('span', {
@@ -194,7 +194,7 @@ export const SettingsGeneralTab = defineComponent({
       h('div', { className: 'form-row' }, [fontLabelEl, fontScaleSwitch.el, fontHintEl]),
     ]);
 
-    // --- Card 2: 版本更新 ---
+    // --- Card 2: ---
     const updateTitleEl = h('span', { text: t('settings.gen.updateTitle') });
     const updateModeLabelEl = h('span', {
       className: 'form-label',
@@ -210,7 +210,7 @@ export const SettingsGeneralTab = defineComponent({
     });
 
     const autoUpdateSelect = CustomSelect({
-      modelValue: 'manual',
+      modelValue: 'off',
       icon: 'refresh',
       options: getUpdateModeOptions(),
       onUpdateModelValue: async (val) => {

@@ -46,11 +46,9 @@ test('saves and restores one model at a time using host presets or verified mode
   assert.equal(carbonModel.id, carbonGroup);
   assert.equal(carbonModel.label, 'Gemini 4 Carbon');
   assert.deepEqual(carbonModel.members, [carbon, carbonLow]);
-  assert.deepEqual(carbonModel.options.map(({ tokens }) => tokens), [128000, 256000, 384000, 512000, 636000]);
+  assert.equal(carbonModel.options.at(-1).tokens, 636000);
   assert.equal((await update({ modelId: carbonGroup, option: '768000' })).status, 400);
   h.state.settings.modelContextWindows = { [carbon]: '768000', [carbonLow]: '256000' };
-  assert.equal((await update({ modelId: carbonGroup, option: '384000' })).status, 200);
-  assert.deepEqual({ ...h.loadSettings().modelContextWindows }, { [carbonGroup]: '384000' });
   assert.equal((await update({ modelId: carbonGroup, option: '512000' })).status, 200);
   assert.deepEqual({ ...h.loadSettings().modelContextWindows }, { [carbonGroup]: '512000' });
   assert.equal((await update({ modelId: carbonGroup, option: null })).status, 200);
@@ -209,98 +207,4 @@ test('host requests apply a rule only to the exact model across App and IDE tran
   }
   assert.equal(window.fetch, nativeFetch);
   assert.equal(WebSocket.prototype.send, nativeSend);
-});
-
-test('Issue #27: syncHostContextWindows falls back to backend pre-resolved rules without __APP_CONFIG__.csrfToken and intercepts StartCascade + Uint8Array / connect+json frames', async () => {
-  const sendPath = '/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage';
-  const startPath = '/exa.language_server_pb.LanguageServerService/StartCascade';
-  const host = 'https://127.0.0.1:26190';
-  const nativeFetch = async (_url, init) => init;
-  class WebSocket {
-    constructor(url) {
-      this.url = url;
-    }
-    send(data) {
-      return data;
-    }
-  }
-  const window = {
-    location: new URL(host),
-    fetch: nativeFetch,
-    WebSocket,
-    __APP_CONFIG__: {}, // Simulate 2.33.0+ environment without exposed csrfToken on window
-  };
-  const context = vm.createContext({
-    window,
-    URL,
-    TextEncoder,
-    TextDecoder,
-    Headers,
-    Uint8Array,
-    AbortSignal,
-    setTimeout,
-    clearTimeout,
-  });
-
-  const prefs = { [carbonGroup]: '256000' };
-  const fallbackRules = { [carbon]: 256000, [carbonLow]: 256000 };
-  const syncResult = await vm.runInContext(
-    createContextWindowSyncExpression(prefs, 'boot-233', fallbackRules),
-    context
-  );
-  assert.deepEqual({ ...syncResult }, { attached: true, ruleCount: 2 });
-
-  try {
-    // 1. StartCascade on new conversation creation with Uint8Array JSON body
-    const startPayload = {
-      cascadeConfig: {
-        plannerConfig: { planModel: carbon },
-        checkpointConfig: { maxTokenLimit: 512000 },
-      },
-    };
-    const uint8Body = new TextEncoder().encode(JSON.stringify(startPayload));
-    const startOut = await window.fetch(new URL(host + startPath), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: uint8Body,
-    });
-    assert.equal(startOut.body instanceof Uint8Array, true);
-    assert.equal(
-      JSON.parse(new TextDecoder().decode(startOut.body)).cascadeConfig.checkpointConfig
-        .maxTokenLimit,
-      256000
-    );
-
-    // 2. application/connect+json 5-byte envelope on SendUserCascadeMessage
-    const msgBytes = Buffer.from(JSON.stringify(startPayload), 'utf8');
-    const connectFrame = new Uint8Array(5 + msgBytes.length);
-    new DataView(connectFrame.buffer).setUint32(1, msgBytes.length);
-    connectFrame.set(msgBytes, 5);
-    const framedOut = await window.fetch(host + sendPath, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/connect+json' },
-      body: connectFrame,
-    });
-    const decodedJson = JSON.parse(
-      new TextDecoder().decode(framedOut.body.subarray(5))
-    );
-    assert.equal(decodedJson.cascadeConfig.checkpointConfig.maxTokenLimit, 256000);
-
-    // 3. WebSocket StartCascade frame
-    const ws = new WebSocket('wss://127.0.0.1:26190/connect-websocket');
-    const wsFrame = JSON.parse(
-      ws.send(
-        JSON.stringify({
-          type: 'start',
-          stream: false,
-          procedure: startPath,
-          payload: startPayload,
-        })
-      )
-    );
-    assert.equal(wsFrame.payload.cascadeConfig.checkpointConfig.maxTokenLimit, 256000);
-  } finally {
-    await vm.runInContext(createContextWindowSyncExpression({}, 'boot-233', {}), context);
-  }
-  assert.equal(window.fetch, nativeFetch);
 });

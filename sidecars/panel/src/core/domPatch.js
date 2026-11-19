@@ -107,7 +107,7 @@ export function patchStyleVar(el, varName, nextValue) {
 }
 
 /**
- * 判断事件是否发生在目标节点内部（兼容 Shadow DOM 的 `composedPath()` 穿透）。
+ * Shadow DOM `composedPath()` 
  *
  * @param {Event|null|undefined} event
  * @param {Node|null|undefined} element

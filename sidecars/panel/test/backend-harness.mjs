@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import * as metrics from '../trajectory-metrics.mjs';
+import * as metrics from '../speed-metrics.mjs';
 import { stripModuleSyntax } from '../scripts/build-bundle.mjs';
 
 const REAL_CATALOG_RAW = JSON.parse(
@@ -17,17 +17,11 @@ const DEFAULT_BUNDLED_CATALOG = {
 };
 
 const BACKEND_MODULE_FILES = [
-  '../shared/settings-normalization.mjs',
-  '../shared/telemetry-display-rules.mjs',
-  '../shared/window-bridge-protocol.mjs',
   '../backend/context-windows.mjs',
   '../backend/account-oauth.mjs',
   '../backend/account-switch.mjs',
-  '../backend/http-helpers.mjs',
   '../backend/settings-schema.mjs',
   '../backend/config.mjs',
-  '../backend/sqlite-client.mjs',
-  '../backend/proto-wire.mjs',
   '../backend/cli-sqlite-reader.mjs',
   '../backend/cli-statusline-config.mjs',
   '../backend/ls-discovery.mjs',
@@ -39,7 +33,6 @@ const BACKEND_MODULE_FILES = [
   '../backend/local-scanner.mjs',
   '../backend/usage-aggregator.mjs',
   '../backend/telemetry-builder.mjs',
-  '../backend/desktop-launcher-config.mjs',
   '../backend/window-bridge.mjs',
   '../backend/api-actions.mjs',
   '../main.mjs',
@@ -70,21 +63,19 @@ export function backendHarness({
   remoteCatalog=null,
   pluginManifest=null,
   hasGitDir=false,
-  gitConfigText=null,
   pluginRootPath=null,
   remoteFetch=null,
   execFileImpl=null,
   sourceText=null,
   clock=null,
-  timerApi={ setTimeout, clearTimeout },
   metricsImplementation=metrics,
 }={}) {
   const mainUrl = pluginRootPath ? `file://${pluginRootPath}/sidecars/panel/main.mjs` : 'file:///test/sidecars/panel/main.mjs';
   const mainPath = pluginRootPath ? `${pluginRootPath}/sidecars/panel/main.mjs` : '/test/sidecars/panel/main.mjs';
   const source = stripEsmSyntax(sourceText ?? loadCombinedBackendSource(), mainUrl);
-  const state={calls:[],errors:[],saves:[],settings,trajectories,summaries,transcripts,transcriptMtimeMs:1,userStatus,quotaSummary,localCatalog,remoteCatalog,pluginManifest,hasGitDir,gitConfigText,deepStats,deepStatsMtimeMs:1};
+  const state={calls:[],errors:[],saves:[],settings,trajectories,summaries,transcripts,transcriptMtimeMs:1,userStatus,quotaSummary,localCatalog,remoteCatalog,pluginManifest,hasGitDir,deepStats,deepStatsMtimeMs:1};
   const ctx={
-    ...metricsImplementation, URL, AbortSignal, Buffer, TextDecoder, ...timerApi, isDeepStrictEqual, randomUUID,
+    ...metricsImplementation, URL, AbortSignal, Buffer, isDeepStrictEqual, randomUUID,
     ...(clock ? { Date: class extends Date {
       constructor(...args) { super(...(args.length ? args : [clock()])); }
       static now() { return clock(); }
@@ -110,8 +101,7 @@ export function backendHarness({
         const m = norm.match(/\/brain\/([^/]+)\/\.system_generated\/logs\/transcript\.jsonl$/i);
         return Boolean(m && state.transcripts?.[m[1]]);
       }
-      if (norm.endsWith('/.git')) return Boolean(state.hasGitDir || state.gitConfigText);
-      if (norm.endsWith('/.git/config')) return Boolean(state.gitConfigText);
+      if (norm.endsWith('/.git')) return Boolean(state.hasGitDir);
       if (diskDirs && Object.prototype.hasOwnProperty.call(diskDirs, norm)) return true;
       return false;
     },
@@ -148,7 +138,6 @@ export function backendHarness({
       if (norm.endsWith('pricing-catalog.json')) return JSON.stringify(state.localCatalog);
       if (norm.endsWith('remote_pricing_cache.json')) return JSON.stringify(state.remoteCatalog);
       if (norm.endsWith('plugin.json')) return JSON.stringify(state.pluginManifest);
-      if (norm.endsWith('/.git/config')) return String(state.gitConfigText || '');
       return JSON.stringify(cache);
     },
     writeFileSync:(p,s)=>{
@@ -163,7 +152,6 @@ export function backendHarness({
       }
     },
     writeTrajectoryCacheFile:(p,data)=>{
-      if (state.cacheWriteError) throw state.cacheWriteError;
       state.saves.push({path:p,data:JSON.parse(JSON.stringify(data))});
     },
     homedir:()=>'/test-home',dirname:path.dirname,join:path.join,basename:path.basename,delimiter:path.delimiter,pathToFileURL,fileURLToPath:()=>mainPath,
@@ -188,6 +176,6 @@ export function backendHarness({
       return {ok:true,json:async()=>data};
     },
   };
-  vm.runInNewContext(source+'\n globalThis.api={buildTelemetryPayloadInternal,executeTelemetryAction,computeStepCost,resolveModelInfo,resolvePricingAt,inferFamilyFromProviderOrKey,isArgonModelIdentifier,isCarbonModelIdentifier,getBaseModelLabel,formatUpstreamModelId,PLACEHOLDER_MAP,normalizeQuotaFraction,classifyOfficialBucketWindow,classifyQuotaPoolIdentity,buildOfficialQuotaPools,resolveTimeWindow,sanitizeCatalogPayload,rebuildActiveCatalog,getPricingPhaseEpoch,detectCustomGitForkRepo,persistTrajectoryCacheIfNeeded,flushTrajectoryCacheNow,getCachedTrajectory,listCachedTrajectoryEntries,hasPendingTrajectoryCacheSave,syncCloudCatalog,getCloudStatus,isValidSemver,compareSemver,performPluginUpdate,resolveMigratedGitRemoteUrl,loadSettings,executeSettingsAction,executeModelContextWindowAction,executeResetSettingsAction,executeRebuildCacheAction,clearRuntimeCaches,normalizeTopbarCapsuleSlots,normalizeHoverModules,normalizeOverviewModules,normalizeOverviewMetrics,normalizeStepTableColumns,normalizeStepTokenComboFormat,parseStepTokenComboSegments,normalizeModelDisplayMode,normalizePopoverWidthMode,normalizePopoverWidth,normalizeStandalonePort,setStandalonePortListener,parseAnnotationPbtxtTitle,readLocalSummarySnapshot,readLocalSqliteTrajectory,computeSqliteWalSig,buildCliStatusSnapshot,buildCliStatusLineCommand,isManagedCliStatusLineCommand,applyCliStatusLineToSettingsObject,cliDisplayWidth,parseCliModelAndEffort,formatCliStatusLineCapsule};',ctx);
+  vm.runInNewContext(source+'\n globalThis.api={buildTelemetryPayloadInternal,executeTelemetryAction,computeStepCost,resolveModelInfo,inferFamilyFromProviderOrKey,isArgonModelIdentifier,isCarbonModelIdentifier,getBaseModelLabel,formatUpstreamModelId,PLACEHOLDER_MAP,normalizeQuotaFraction,classifyOfficialBucketWindow,classifyQuotaPoolIdentity,buildOfficialQuotaPools,resolveTimeWindow,sanitizeCatalogPayload,rebuildActiveCatalog,syncCloudCatalog,getCloudStatus,isValidSemver,compareSemver,performPluginUpdate,resolveMigratedGitRemoteUrl,loadSettings,executeSettingsAction,executeModelContextWindowAction,executeResetSettingsAction,executeRebuildCacheAction,clearRuntimeCaches,normalizeTopbarCapsuleSlots,normalizeHoverModules,normalizeOverviewModules,normalizeOverviewMetrics,normalizeStepTableColumns,normalizeStepTokenComboFormat,parseStepTokenComboSegments,normalizeModelDisplayMode,normalizePopoverWidthMode,normalizePopoverWidth,normalizeStandalonePort,setStandalonePortListener,parseAnnotationPbtxtTitle,buildCliStatusSnapshot,buildCliStatusLineCommand,isManagedCliStatusLineCommand,applyCliStatusLineToSettingsObject,cliDisplayWidth,parseCliModelAndEffort,formatCliStatusLineCapsule};',ctx);
   return {...ctx.api,state};
 }

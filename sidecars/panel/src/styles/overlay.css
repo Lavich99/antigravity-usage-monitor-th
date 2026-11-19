@@ -1,11 +1,11 @@
 /*
- * 双栖模式顶栏胶囊与悬浮面板样式表 (overlay.css).
- * 严格遵循单层微边框与语义变量规范（零硬编码色值、零 Emoji、硬件加速合成层动画）。
+ * (overlay.css).
+ * Emoji 
  */
 
-/* --- 1. 顶栏胶囊宿主容器 (Titlebar Capsule Host) --- */
+/* --- 1. (Titlebar Capsule Host) --- */
 :host(.wm-capsule-host) {
-  --ui-font-scale: 1 !important;
+  --ui-font-scale: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -15,7 +15,7 @@
   -webkit-app-region: no-drag;
   pointer-events: auto;
   user-select: none;
-  font-family: "Google Sans Flex", "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 450;
   font-stretch: 100%;
@@ -24,7 +24,6 @@
   letter-spacing: 0.015em;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   color: var(--text-primary);
   z-index: 2147482900;
 }
@@ -78,10 +77,6 @@
   right: 144px;
 }
 
-:host(.wm-capsule-host[data-dock="fixed"][data-os="mac"]) {
-  right: 12px;
-}
-
 @keyframes wm-dot-pulse {
   0%, 100% {
     opacity: 1;
@@ -91,7 +86,7 @@
   }
 }
 
-/* 左侧多会话实时状态触发器（无边框、与宿主顶栏按钮同高 28px、整数行高防压扁） */
+/* 28px */
 .wm-multi-btn {
   position: relative;
   display: inline-flex;
@@ -210,7 +205,7 @@
   color: var(--text-primary);
 }
 
-/* 右侧胶囊通用槽位容器与按指标预占定宽（严格防止动态数值跳动，保留舒展字间距） */
+/* */
 .wm-cap-slot {
   display: inline-flex;
   align-items: center;
@@ -218,7 +213,9 @@
   height: 18px;
   line-height: 18px;
   flex-shrink: 0;
+  contain: layout style;
   color: var(--text-secondary);
+  transition: color 260ms cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 .wm-slot-text {
@@ -230,13 +227,25 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 0;
+  transition: color 260ms cubic-bezier(0.65, 0, 0.35, 1);
 }
 
-/* 环形上下文指示器（固定预占宽度 58px：14px 环 + 5px 间距 + 完整容纳四字符 100%） */
+/* 59px = 14px ring + 4px gap + 41px locked number box */
 .wm-ctx-seg {
-  justify-content: center;
-  gap: 5px;
-  width: 58px;
+  justify-content: flex-start;
+  gap: 4px;
+  width: 59px;
+  min-width: 59px;
+  max-width: 59px;
+}
+
+@keyframes wm-ctx-ring-spin {
+  from {
+    transform: rotate(-90deg);
+  }
+  to {
+    transform: rotate(270deg);
+  }
 }
 
 .wm-ring-svg {
@@ -244,6 +253,12 @@
   height: 14px;
   flex-shrink: 0;
   transform: rotate(-90deg);
+  transform-origin: center;
+}
+
+.wm-capsule-btn.is-running .wm-cap-slot[data-metric="context"] .wm-ring-svg {
+  will-change: transform;
+  animation: wm-ctx-ring-spin 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite;
 }
 
 .wm-ring-track {
@@ -257,9 +272,10 @@
   stroke: var(--accent-primary);
   stroke-width: 2;
   stroke-linecap: round;
+  will-change: stroke-dashoffset;
   transition:
-    stroke-dashoffset var(--dur-normal) var(--ease-fast),
-    stroke var(--dur-fast) var(--ease-fast);
+    stroke-dashoffset 420ms cubic-bezier(0.65, 0, 0.35, 1),
+    stroke 260ms cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 .wm-ring-fill.tone-warn {
@@ -270,11 +286,43 @@
   stroke: var(--metric-danger);
 }
 
+.wm-ring-fill[hidden],
+.wm-ring-seg[hidden] {
+  display: none;
+}
+
+.wm-ring-seg {
+  fill: none;
+  stroke: var(--accent-primary);
+  stroke-width: 2;
+  stroke-linecap: butt;
+  will-change: stroke-dasharray, stroke-dashoffset;
+  transition:
+    stroke-dasharray 420ms cubic-bezier(0.65, 0, 0.35, 1),
+    stroke-dashoffset 420ms cubic-bezier(0.65, 0, 0.35, 1),
+    stroke 260ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.wm-ring-seg.seg-assistant { stroke: var(--ctx-assistant); }
+.wm-ring-seg.seg-tool-results { stroke: var(--ctx-tool-results); }
+.wm-ring-seg.seg-user-input { stroke: var(--ctx-user-input); }
+.wm-ring-seg.seg-subagent-msg { stroke: var(--ctx-subagent-msg); }
+.wm-ring-seg.seg-checkpoint { stroke: var(--ctx-checkpoint); }
+.wm-ring-seg.seg-system-tools { stroke: var(--ctx-system-tools); }
+.wm-ring-seg.seg-mcp-tools { stroke: var(--ctx-mcp-tools); }
+.wm-ring-seg.seg-skills { stroke: var(--ctx-skills); }
+.wm-ring-seg.seg-system-prompt { stroke: var(--ctx-system-prompt); }
+.wm-ring-seg.seg-user-rules { stroke: var(--ctx-user-rules); }
+
 .wm-ctx-pct {
-  min-width: 28px;
-  max-width: none;
-  overflow: visible;
-  text-overflow: clip;
+  width: 41px;
+  min-width: 41px;
+  max-width: 41px;
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  line-height: 18px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
   text-align: left;
   font-weight: 500;
   color: var(--text-primary);
@@ -287,7 +335,7 @@
   flex-shrink: 0;
 }
 
-/* 速度槽位（固定预占宽度 58px 居中对齐） */
+/* 58px */
 .wm-seg-speed {
   width: 58px;
 }
@@ -302,7 +350,7 @@
   font-weight: 500;
 }
 
-/* 首字延迟槽位（固定预占宽度 46px 居中对齐，覆盖 0.85s ~ 105s） */
+/* 46px 0.85s ~ 105s */
 .wm-seg-ttft {
   width: 46px;
 }
@@ -312,7 +360,7 @@
   text-align: center;
 }
 
-/* 本次费用槽位（固定预占宽度 52px 居中对齐，覆盖 <$0.001 ~ $99.99） */
+/* 52px <$0.001 ~ $99.99 */
 .wm-seg-cost {
   width: 52px;
 }
@@ -324,17 +372,24 @@
   font-weight: 500;
 }
 
-/* 配额槽位（固定预占宽度 52px 居中对齐，完整容纳 余 100% / 余 --% 且在任意槽位对称） */
+/* Locked ring + 2-decimal percentage geometry matching .wm-ctx-seg */
 .wm-seg-quota {
-  width: 52px;
+  justify-content: flex-start;
+  gap: 4px;
+  width: 59px;
+  min-width: 59px;
+  max-width: 59px;
 }
 
 .wm-quota-text {
-  width: 52px;
-  text-align: center;
+  width: 41px;
+  min-width: 41px;
+  max-width: 41px;
+  text-align: left;
+  font-weight: 500;
 }
 
-/* 缓存命中率槽位（固定预占宽度 44px 居中对齐） */
+/* 44px */
 .wm-seg-cache {
   width: 44px;
 }
@@ -344,7 +399,7 @@
   text-align: center;
 }
 
-/* 会话总 Token 槽位（固定预占宽度 52px 居中对齐） */
+/* Token 52px */
 .wm-seg-tokens {
   width: 52px;
 }
@@ -383,7 +438,7 @@
   color: var(--text-muted);
 }
 
-/* 仅在超窄 ring-only 折叠态下使用右上角 5px 提示圆点；常规态由柔和微胶囊 .wm-update-btn 承载 */
+/* ring-only 5px .wm-update-btn */
 .wm-update-dot {
   position: absolute;
   top: 3px;
@@ -399,7 +454,7 @@
   display: none !important;
 }
 
-/* 顶栏右侧柔和半透明新版本胶囊按钮（20px 矮胶囊嵌套于 28px 顶栏，克制不突兀，左键一键升级） */
+/* 20px 28px */
 .wm-update-btn {
   display: inline-flex;
   align-items: center;
@@ -468,7 +523,7 @@
   display: none !important;
 }
 
-/* 四级响应式迟滞折叠（基于可见槽位次序 data-vis-rank 1..5 与分隔线次序 data-sep-for-rank 动态折叠） */
+/* data-vis-rank 1..5 data-sep-for-rank */
 :host(.wm-capsule-host[data-layout="compact"]) .wm-cap-slot[data-vis-rank="3"],
 :host(.wm-capsule-host[data-layout="compact"]) .wm-cap-slot[data-vis-rank="4"],
 :host(.wm-capsule-host[data-layout="compact"]) .wm-cap-slot[data-vis-rank="5"],
@@ -514,9 +569,11 @@
 
 :host(.wm-capsule-host[data-layout="ring-only"]) .wm-cap-slot[data-vis-rank="1"].wm-ctx-seg {
   width: 14px;
+  min-width: 14px;
+  max-width: 14px;
 }
 
-/* --- 2. 顶层浮层传送门宿主 (Body Portal Host: Multi-Session HUD, Tooltip & Full 4-Tab Popover) --- */
+/* --- 2. (Body Portal Host: Multi-Session HUD, Tooltip & Full 4-Tab Popover) --- */
 :host(.wm-portal-host) {
   position: fixed;
   inset: 0;
@@ -530,7 +587,6 @@
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   color: var(--text-primary);
 }
 
@@ -584,12 +640,12 @@
   max-width: none;
 }
 
-/* 顶栏胶囊悬停全景概览浮层（复用实时概览三卡片架构，全槽位预占，仅就地更新节点不跳动） */
+/* */
 .wm-hover-tip {
   position: fixed;
   top: 42px;
   left: 12px;
-  width: min(calc(522px * var(--ui-panel-scale, 1)), calc(100vw - 24px));
+  width: min(522px, calc(100vw - 24px));
   max-height: calc(100vh - 54px);
   padding: var(--space-3) var(--space-4);
   display: flex;
@@ -608,12 +664,12 @@
   animation: wm-popover-in var(--dur-instant) var(--ease-fast);
 }
 
-/* 左侧在线多会话实时看板浮层（单层无套娃细线卡片，仅显示在线运行会话，留足呼吸感） */
+/* */
 .wm-multi-panel {
   position: fixed;
   top: 42px;
   left: 12px;
-  width: min(calc(464px * var(--ui-panel-scale, 1)), calc(100vw - 24px));
+  width: min(464px, calc(100vw - 24px));
   max-height: calc(100vh - 54px);
   padding: 14px 16px;
   display: flex;
@@ -719,8 +775,8 @@
 .wm-pin-badge {
   display: inline-flex;
   align-items: center;
-  min-height: calc(16px * var(--ui-font-scale, 1));
-  padding: 1px 5px;
+  height: 16px;
+  padding: 0 5px;
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--accent-primary);
@@ -732,8 +788,8 @@
 .wm-session-tag {
   display: inline-flex;
   align-items: center;
-  min-height: calc(16px * var(--ui-font-scale, 1));
-  padding: 1px 4px;
+  height: 16px;
+  padding: 0 4px;
   font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-secondary);
@@ -760,7 +816,7 @@
   border-bottom: 1px solid var(--border-hairline);
 }
 
-/* 多会话单层面板内去除重复边框与底色，留足行距与段落呼吸感，仅靠左侧圆点闪烁表达状态 */
+/* */
 .wm-multi-panel .live-activity-list {
   gap: 0;
 }
@@ -813,4 +869,14 @@
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text-secondary) 38%, transparent);
   flex-shrink: 0;
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .wm-cap-slot,
+  .wm-slot-text,
+  .wm-ring-fill,
+  .wm-ring-seg {
+    transition: none !important;
+  }
 }

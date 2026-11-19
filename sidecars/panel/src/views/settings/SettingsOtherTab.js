@@ -1,5 +1,5 @@
 /**
- * @fileoverview Preferences Tab 3: `SettingsOtherTab.js` ("其他").
+ * @fileoverview Preferences Tab 3: `SettingsOtherTab.js` (" ").
  * Houses Model Identifier Formatting, Per-Model Context Windows,
  * Local Trajectory Cache Rebuild, and Two-Step Factory Preference Reset.
  */
@@ -17,7 +17,6 @@ import {
   saveSettingsPatch,
 } from '../../store/telemetryStore.js';
 import { CustomSelect } from '../../components/ui/CustomSelect.js';
-import { BridgeStatusNotice } from '../../components/settings/BridgeStatusNotice.js';
 
 function getStepModelDisplayOptions() {
   return [
@@ -42,13 +41,13 @@ export const SettingsOtherTab = defineComponent({
     let draftContextRiskAccepted = false;
     let acceptingContextRisk = false;
     let latestSettings = null;
-    let latestWindowBridge = null;
-    let latestHostPlatform = 'win32';
     let contextWindowModels = [];
+    let discoveredModels = [];
     let contextModelId = '';
     let savingContextWindow = false;
     let contextFeedback = '';
     let modelTimer = null;
+    let customPriceTimer = null;
     let maintTimer = null;
     let resetConfirmTimer = null;
     let resetConfirmArmed = false;
@@ -94,7 +93,7 @@ export const SettingsOtherTab = defineComponent({
       }
     }
 
-    // --- Card 1: 模型标识显示 ---
+    // --- Card 1: ---
     const modelCardTitleEl = h('span', { text: t('settings.oth.modelTitle') });
     const modelFormatLabelEl = h('span', {
       className: 'form-label',
@@ -158,7 +157,7 @@ export const SettingsOtherTab = defineComponent({
       h('div', { className: 'form-row' }, [orchFormatLabelEl, orchestratorIdSelect.el]),
     ]);
 
-    // --- Card 2: 按模型设置上下文窗口 ---
+    // --- Card 2: ---
     const baselineTitleEl = h('span', { text: t('settings.oth.baselineTitle') });
     const ctxModelLabel = h('span', { className: 'form-label' });
     const ctxWindowLabel = h('span', { className: 'form-label' });
@@ -193,11 +192,9 @@ export const SettingsOtherTab = defineComponent({
         }
       },
     });
-    const ctxBridgeNotice = BridgeStatusNotice({ contextMode: true });
     const ctxModelRow = h('div', { className: 'form-row' }, [ctxModelLabel, ctxModelSelect.el]);
     const ctxWindowRow = h('div', { className: 'form-row' }, [ctxWindowLabel, ctxWindowSelect.el]);
     const ctxControlsBody = h('div', { className: 'ctx-controls-body is-locked' }, [
-      ctxBridgeNotice.el,
       ctxModelRow,
       ctxWindowRow,
       h('div', { className: 'form-row' }, [ctxHint]),
@@ -274,13 +271,6 @@ export const SettingsOtherTab = defineComponent({
       patchAttr(ctxRiskAcceptBtn, 'disabled', acceptingContextRisk);
 
       const saved = latestSettings?.modelContextWindows || {};
-      const wbState = String(latestWindowBridge?.state || '').trim();
-      const isBridgeMissing = wbState === 'no_devtools_port' || wbState === 'cdp_unreachable';
-      ctxBridgeNotice.refs.update({
-        visible: unlocked,
-        windowBridge: latestWindowBridge,
-        hostPlatform: latestHostPlatform,
-      });
       const models = new Map(contextWindowModels.map((model) => [model.id, model]));
       const knownIds = new Set(contextWindowModels.flatMap(({ id, members = [] }) => [id, ...members]));
       for (const id of Object.keys(saved)) {
@@ -325,7 +315,6 @@ export const SettingsOtherTab = defineComponent({
             else if (value) {
               const name = formatLimit(value);
               if (!isAvailable(model, value)) meta = t('settings.oth.ctxUnavailable', { name });
-              else if (isBridgeMissing) meta = t('settings.oth.ctxPendingBridge', { name });
               else if (/^\d+$/.test(value) && model.reportedLimitTokens && Number(value) !== model.reportedLimitTokens) {
                 meta = t('settings.oth.ctxConfiguredReported', {
                   name,
@@ -368,7 +357,7 @@ export const SettingsOtherTab = defineComponent({
     ]);
     renderContextWindows();
 
-    // --- Card 3: 缓存与重置 ---
+    // --- Card 3: ---
     const maintTitleEl = h('span', { text: t('settings.oth.maintTitle') });
     const cacheLabelEl = h('span', {
       className: 'settings-action-title',
@@ -458,7 +447,7 @@ export const SettingsOtherTab = defineComponent({
           showMaintFeedback(t('settings.oth.resettingBtn'), 0);
           try {
             const res = await resetAllSettings();
-            setI18nLanguage(res?.settings?.language || 'zh-CN');
+            setI18nLanguage(res?.settings?.language || 'th-TH');
             showMaintFeedback(t('settings.oth.resetAllDone'), 2800);
           } catch {
             showMaintFeedback(t('settings.saveFailed'), 2800);
@@ -490,23 +479,260 @@ export const SettingsOtherTab = defineComponent({
       ]),
     ]);
 
+    // --- Card 4: Custom Offline Model Pricing (Future-Model Ready) ---
+    const customPriceTitleEl = h('span', { text: t('settings.oth.customPriceTitle') });
+    const customPriceHintEl = h('span', {
+      className: 'settings-hint-text',
+      text: t('settings.oth.customPriceHint'),
+    });
+    const customPriceStatusText = h('span', {
+      className: 'text-muted',
+      style: 'font-size: var(--fs-md);',
+      text: '',
+    });
+    function showCustomPriceFeedback(text, autoClearMs = 2000) {
+      if (customPriceTimer) {
+        clearTimeout(customPriceTimer);
+        customPriceTimer = null;
+      }
+      patchText(customPriceStatusText, text);
+      if (text && autoClearMs > 0) {
+        customPriceTimer = setTimeout(() => {
+          customPriceTimer = null;
+          patchText(customPriceStatusText, '');
+        }, autoClearMs);
+      }
+    }
+
+    const cpModelIdLabel = h('span', { className: 'form-label', text: t('settings.oth.customPriceModelId') });
+    const cpShortLabel = h('span', { className: 'form-label', text: t('settings.oth.customPriceShort') });
+    const cpFamilyLabel = h('span', { className: 'form-label', text: t('settings.oth.customPriceFamily') });
+    const cpInLabel = h('span', { className: 'form-label', text: t('settings.oth.customPriceIn') });
+    const cpCacheLabel = h('span', { className: 'form-label', text: t('settings.oth.customPriceCache') });
+    const cpOutLabel = h('span', { className: 'form-label', text: t('settings.oth.customPriceOut') });
+
+    const cpModelIdInput = h('input', {
+      type: 'text',
+      className: 'custom-price-input text-mono',
+      placeholder: 'gemini-5-pro / MODEL_PLACEHOLDER_...',
+    });
+    const cpShortInput = h('input', {
+      type: 'text',
+      className: 'custom-price-input',
+      placeholder: 'Gemini 5 Pro',
+    });
+    let cpFamilyValue = 'Gemini';
+    const cpFamilySelect = CustomSelect({
+      modelValue: 'Gemini',
+      options: [
+        { value: 'Gemini', label: 'Gemini' },
+        { value: 'Claude', label: 'Claude' },
+        { value: 'GPT', label: 'GPT' },
+        { value: 'Other', label: 'Other' },
+      ],
+      onUpdateModelValue: (val) => {
+        cpFamilyValue = val || 'Other';
+        cpFamilySelect.setValue(cpFamilyValue);
+      },
+    });
+    const cpInInput = h('input', { type: 'number', min: '0', step: '0.01', className: 'custom-price-input text-mono', placeholder: '1.25' });
+    const cpCacheInput = h('input', { type: 'number', min: '0', step: '0.01', className: 'custom-price-input text-mono', placeholder: '0.125' });
+    const cpOutInput = h('input', { type: 'number', min: '0', step: '0.01', className: 'custom-price-input text-mono', placeholder: '10.00' });
+
+    const cpSaveBtnText = h('span', { text: t('settings.oth.customPriceSave') });
+    const cpSaveBtn = h(
+      'button',
+      {
+        type: 'button',
+        className: 'btn-secondary',
+        onClick: async () => {
+          const key = String(cpModelIdInput.value || '').trim();
+          const inVal = Number(cpInInput.value);
+          const cacheVal = cpCacheInput.value === '' ? +(inVal * 0.1).toFixed(4) : Number(cpCacheInput.value);
+          const outVal = Number(cpOutInput.value);
+          if (
+            !key ||
+            !Number.isFinite(inVal) || inVal < 0 ||
+            !Number.isFinite(cacheVal) || cacheVal < 0 ||
+            !Number.isFinite(outVal) || outVal < 0
+          ) {
+            showCustomPriceFeedback(t('settings.oth.customPriceInvalid'), 2500);
+            return;
+          }
+          const nextMap = {
+            ...(latestSettings?.customModelPricing || {}),
+            [key]: {
+              input: +inVal.toFixed(6),
+              cache: +cacheVal.toFixed(6),
+              output: +outVal.toFixed(6),
+              short: String(cpShortInput.value || '').trim() || key,
+              family: cpFamilyValue || 'Other',
+            },
+          };
+          showCustomPriceFeedback(t('settings.saving'), 0);
+          try {
+            await saveSettingsPatch({ customModelPricing: nextMap });
+            latestSettings = { ...(latestSettings || {}), customModelPricing: nextMap };
+            cpModelIdInput.value = '';
+            cpShortInput.value = '';
+            cpInInput.value = '';
+            cpCacheInput.value = '';
+            cpOutInput.value = '';
+            renderCustomPricing();
+            showCustomPriceFeedback(t('settings.saved'), 1800);
+          } catch {
+            showCustomPriceFeedback(t('settings.saveFailed'), 2500);
+          }
+        },
+      },
+      [cpSaveBtnText]
+    );
+
+    const cpDetectedHeader = h('span', { className: 'form-label' });
+    const cpDetectedList = h('div', { className: 'custom-price-list' });
+    const cpSavedHeader = h('span', { className: 'form-label' });
+    const cpSavedList = h('div', { className: 'custom-price-list' });
+
+    function fillCustomPriceForm({ modelId = '', shortName = '', family = 'Other', pricing = null }) {
+      cpModelIdInput.value = modelId;
+      cpShortInput.value = shortName || modelId;
+      cpFamilyValue = ['Gemini', 'Claude', 'GPT', 'Other'].includes(family) ? family : 'Other';
+      cpFamilySelect.setValue(cpFamilyValue);
+      cpInInput.value = pricing?.input != null ? String(pricing.input) : '';
+      cpCacheInput.value = pricing?.cache != null ? String(pricing.cache) : '';
+      cpOutInput.value = pricing?.output != null ? String(pricing.output) : '';
+      cpInInput.focus?.();
+    }
+
+    function replaceNodeChildren(parent, nodes) {
+      while (parent.firstChild) parent.removeChild(parent.firstChild);
+      for (const node of nodes) {
+        if (node) parent.appendChild(node);
+      }
+    }
+
+    function renderCustomPricing() {
+      const unpriced = (discoveredModels || []).filter((m) => m && !m.pricing);
+      patchText(
+        cpDetectedHeader,
+        unpriced.length > 0
+          ? t('settings.oth.customPriceDetected', { count: unpriced.length })
+          : t('settings.oth.customPriceAllPriced')
+      );
+      replaceNodeChildren(
+        cpDetectedList,
+        unpriced.map((m) =>
+          h('div', { className: 'custom-price-row' }, [
+            h('div', { className: 'custom-price-row-info' }, [
+              h('span', { className: 'custom-price-row-title', text: m.label || m.modelId }),
+              h('span', {
+                className: 'custom-price-row-meta text-mono',
+                text: `${m.modelId} · ${m.family || 'Other'}`,
+              }),
+            ]),
+            h('div', { className: 'custom-price-row-actions' }, [
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'btn-secondary custom-price-mini-btn',
+                  text: t('settings.oth.customPriceConfigure'),
+                  onClick: () => fillCustomPriceForm(m),
+                }
+              ),
+            ]),
+          ])
+        )
+      );
+
+      const savedEntries = Object.entries(latestSettings?.customModelPricing || {});
+      patchText(cpSavedHeader, t('settings.oth.customPriceSavedList', { count: savedEntries.length }));
+      if (savedEntries.length === 0) {
+        replaceNodeChildren(cpSavedList, [
+          h('span', { className: 'settings-hint-text', text: t('settings.oth.customPriceEmpty') }),
+        ]);
+      } else {
+        replaceNodeChildren(
+          cpSavedList,
+          savedEntries.map(([id, p]) =>
+            h('div', { className: 'custom-price-row' }, [
+              h('div', { className: 'custom-price-row-info' }, [
+                h('span', { className: 'custom-price-row-title', text: `${p.short || id} (${id})` }),
+                h('span', {
+                  className: 'custom-price-row-meta text-mono',
+                  text: `In $${p.input} · Cache $${p.cache} · Out $${p.output} / 1M · ${p.family || 'Other'}`,
+                }),
+              ]),
+              h('div', { className: 'custom-price-row-actions' }, [
+                h('button', {
+                  type: 'button',
+                  className: 'btn-secondary custom-price-mini-btn',
+                  text: t('settings.oth.customPriceEdit'),
+                  onClick: () =>
+                    fillCustomPriceForm({ modelId: id, shortName: p.short || id, family: p.family, pricing: p }),
+                }),
+                h('button', {
+                  type: 'button',
+                  className: 'btn-secondary custom-price-mini-btn',
+                  text: t('settings.oth.customPriceDelete'),
+                  onClick: async () => {
+                    const nextMap = { ...(latestSettings?.customModelPricing || {}) };
+                    delete nextMap[id];
+                    showCustomPriceFeedback(t('settings.saving'), 0);
+                    try {
+                      await saveSettingsPatch({ customModelPricing: nextMap });
+                      latestSettings = { ...(latestSettings || {}), customModelPricing: nextMap };
+                      renderCustomPricing();
+                      showCustomPriceFeedback(t('settings.saved'), 1500);
+                    } catch {
+                      showCustomPriceFeedback(t('settings.saveFailed'), 2500);
+                    }
+                  },
+                }),
+              ]),
+            ])
+          )
+        );
+      }
+      getProps()?.onLayoutChange?.();
+    }
+
+    const customPricingPanel = h('section', { className: 'panel' }, [
+      h('div', { className: 'panel-header' }, [
+        h('span', { className: 'panel-title' }, [
+          createSvgIcon('sliders', { size: 13 }),
+          customPriceTitleEl,
+        ]),
+        customPriceStatusText,
+      ]),
+      customPriceHintEl,
+      h('div', { className: 'form-row' }, [cpDetectedHeader, cpDetectedList]),
+      h('div', { className: 'custom-price-grid' }, [
+        h('div', { className: 'custom-price-field' }, [cpModelIdLabel, cpModelIdInput]),
+        h('div', { className: 'custom-price-field' }, [cpShortLabel, cpShortInput]),
+      ]),
+      h('div', { className: 'form-row' }, [cpFamilyLabel, cpFamilySelect.el]),
+      h('div', { className: 'custom-price-rates-grid' }, [
+        h('div', { className: 'custom-price-field' }, [cpInLabel, cpInInput]),
+        h('div', { className: 'custom-price-field' }, [cpCacheLabel, cpCacheInput]),
+        h('div', { className: 'custom-price-field' }, [cpOutLabel, cpOutInput]),
+      ]),
+      h('div', { className: 'form-row' }, [cpSaveBtn]),
+      h('div', { className: 'form-row' }, [cpSavedHeader, cpSavedList]),
+    ]);
+
     const rootEl = h('div', { className: 'settings-tab-stack' }, [
       modelPanel,
+      customPricingPanel,
       baselinePanel,
       maintPanel,
     ]);
 
-    function renderSettings(
-      settings,
-      models = contextWindowModels,
-      windowBridge = latestWindowBridge,
-      hostPlatform = latestHostPlatform
-    ) {
+    function renderSettings(settings, models = contextWindowModels, discovered = discoveredModels) {
       if (!settings) return;
       latestSettings = settings;
       contextWindowModels = models;
-      if (windowBridge !== undefined) latestWindowBridge = windowBridge;
-      if (hostPlatform) latestHostPlatform = hostPlatform;
+      discoveredModels = Array.isArray(discovered) ? discovered : [];
       draftModelDisplayMode = normalizeClientModelDisplayMode(
         settings.modelDisplayMode,
         settings.showUpstreamModel
@@ -524,12 +750,23 @@ export const SettingsOtherTab = defineComponent({
         options: getOrchestratorIdDisplayOptions(),
       });
       renderContextWindows();
+      renderCustomPricing();
     }
 
     function refreshLabels() {
       patchText(modelCardTitleEl, t('settings.oth.modelTitle'));
       patchText(modelFormatLabelEl, t('settings.oth.modelFormat'));
       patchText(orchFormatLabelEl, t('settings.oth.orchFormat'));
+      patchText(customPriceTitleEl, t('settings.oth.customPriceTitle'));
+      patchText(customPriceHintEl, t('settings.oth.customPriceHint'));
+      patchText(cpModelIdLabel, t('settings.oth.customPriceModelId'));
+      patchText(cpShortLabel, t('settings.oth.customPriceShort'));
+      patchText(cpFamilyLabel, t('settings.oth.customPriceFamily'));
+      patchText(cpInLabel, t('settings.oth.customPriceIn'));
+      patchText(cpCacheLabel, t('settings.oth.customPriceCache'));
+      patchText(cpOutLabel, t('settings.oth.customPriceOut'));
+      patchText(cpSaveBtnText, t('settings.oth.customPriceSave'));
+      renderCustomPricing();
       patchText(baselineTitleEl, t('settings.oth.baselineTitle'));
       renderContextWindows();
       patchText(maintTitleEl, t('settings.oth.maintTitle'));
@@ -560,11 +797,12 @@ export const SettingsOtherTab = defineComponent({
 
     onCleanup(() => {
       if (modelTimer) clearTimeout(modelTimer);
+      if (customPriceTimer) clearTimeout(customPriceTimer);
       if (maintTimer) clearTimeout(maintTimer);
       if (resetConfirmTimer) clearTimeout(resetConfirmTimer);
       stepModelSelect.destroy();
       orchestratorIdSelect.destroy();
-      ctxBridgeNotice.destroy();
+      cpFamilySelect.destroy();
       ctxModelSelect.destroy();
       ctxWindowSelect.destroy();
     });
@@ -574,7 +812,6 @@ export const SettingsOtherTab = defineComponent({
       refs: {
         stepModelSelect,
         orchestratorIdSelect,
-        ctxBridgeNotice,
         ctxModelSelect,
         ctxWindowSelect,
         rebuildCacheBtn,

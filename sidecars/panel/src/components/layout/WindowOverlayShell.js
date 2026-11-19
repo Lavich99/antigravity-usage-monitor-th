@@ -1,51 +1,44 @@
 /**
- * @fileoverview 主窗口双栖挂载外壳 (WindowOverlayShell.js).
+ * @fileoverview (WindowOverlayShell.js).
  *
- * 采用「分离式双 Shadow Host」架构，彻底规避宿主顶栏层叠上下文 (`z-0` / `overflow: hidden`) 裁切与路由重绘卸载问题：
- * 1. `#ag-usage-monitor-capsule`：轻量顶栏胶囊，优先内嵌停靠至 `[class*="@container/titlebar"]` 右侧按钮组，
- *    支持四级迟滞宽度自适应折叠（`wide` -> `compact` -> `minimal` -> `ring-only`），找不到顶栏时自动回退至右上角固定定位；
- * 2. `#ag-usage-monitor-portal`：常驻 `document.body` 顶层的无遮挡浮层宿主，承载悬停速览卡与完整四标签 `App()` 监控面板，
- *    在宿主切换会话重建顶栏 DOM 时始终保持组件实例、滚动位置与动画状态不丢失。
+ * Shadow Host (`z-0` / `overflow: hidden`) 
+ * 1. `#ag-usage-monitor-capsule` `[class*="@container/titlebar"]` 
+ * `wide` -> `compact` -> `minimal` -> `ring-only` 
+ * 2. `#ag-usage-monitor-portal` `document.body` `App()` 
+ * DOM 
  */
 
-import {
-  WINDOW_BRIDGE_KEY,
-  WINDOW_OVERLAY_KEY,
-  WINDOW_OVERLAY_METHODS,
-  readInjectedWindowBridge,
-} from '../../../shared/window-bridge-protocol.mjs';
 import { App } from '../../App.js';
-import {
-  PANEL_SCALE_FACTORS,
-  applyAppearanceToRoot,
-  normalizeClientFontScale,
-} from '../../core/appearance.js';
+import { applyAppearanceToRoot } from '../../core/appearance.js';
 import {
   h,
   isEventInside,
   patchAttr,
   patchClasses,
+  patchKeyedList,
   patchText,
 } from '../../core/domPatch.js';
+import { formatElapsedSec } from '../../core/formatters.js';
 import { deliverCdpBridgeResponses, getWindowBridgeConfig } from '../../core/httpClient.js';
-import { i18nStore, setI18nLanguage, t } from '../../i18n/index.js';
+import { getEffectiveLocale, i18nStore, setI18nLanguage, t, translateLiveActivityText } from '../../i18n/index.js';
 import { createSvgIcon, patchSvgIcon } from '../../icons/SvgIcon.js';
 import {
-  buildCapsuleSlotContext,
+  RING_CIRCUMFERENCE,
+  cancelCapsuleSlotAnimations,
   createCapsuleSlotNode,
-  resolveMultiSessionCapsuleState,
   syncCapsuleSlotNodes,
 } from '../widgets/CapsuleBarWidget.js';
-import { LiveActivityWidget } from '../widgets/LiveActivityWidget.js';
 import { createDynamicWidgetHost } from '../../registries/widgetRegistry.js';
 import {
   DEFAULT_CLIENT_HOVER_MODULES,
   extractHostRouteCascadeId,
   fetchTelemetry,
-  isMacHostPlatform,
+  formatAgentBadgeText,
+  getAgentBadgeClass,
   normalizeClientHoverModules,
   normalizeClientPopoverWidth,
   normalizeClientPopoverWidthMode,
+  normalizeClientQuotaDisplayMode,
   normalizeClientTopbarSlots,
   normalizeClientUpdateMode,
   normalizeClientWindowMountMode,
@@ -59,15 +52,111 @@ import { uiStore } from '../../store/uiStore.js';
 
 const CAPSULE_HOST_ID = 'ag-usage-monitor-capsule';
 const PORTAL_HOST_ID = 'ag-usage-monitor-portal';
+const COMPOSER_LAYOUT_STYLE_ID = 'ag-usage-monitor-composer-layout-style';
+const COMPOSER_LAYOUT_STYLE_CSS = `
+[data-wm-composer-row="1"] {
+  justify-content: flex-start !important;
+}
+[data-wm-composer-left="1"] {
+  flex: 0 1 auto !important;
+  order: 1 !important;
+  min-width: 0 !important;
+}
+[data-wm-composer-right="1"] {
+  display: contents !important;
+}
+[data-wm-composer-perm="1"] {
+  order: 2 !important;
+  margin-left: 2px !important;
+  margin-right: 0 !important;
+}
+[data-wm-composer-row="1"] > .wm-capsule-host[data-dock="composer"][data-composer-perm-left="1"],
+[data-wm-composer-right="1"] > .wm-capsule-host[data-dock="composer"][data-composer-perm-left="1"] {
+  order: 3 !important;
+  margin-left: auto !important;
+  margin-right: 4px !important;
+}
+[data-wm-composer-actions="1"] {
+  order: 4 !important;
+}
+`.trim();
+
+function syncComposerLayoutStyleElement(enabled) {
+  if (typeof document === 'undefined') return;
+  const existing = document.getElementById?.(COMPOSER_LAYOUT_STYLE_ID) || null;
+  if (!enabled) {
+    if (existing) {
+      try {
+        existing.remove?.();
+      } catch {
+        // ignore remove errors
+      }
+    }
+    return;
+  }
+  if (existing) return;
+  const headOrRoot = document.head || document.documentElement || document.body;
+  if (!headOrRoot || typeof document.createElement !== 'function') return;
+  const styleEl = document.createElement('style');
+  styleEl.id = COMPOSER_LAYOUT_STYLE_ID;
+  styleEl.textContent = COMPOSER_LAYOUT_STYLE_CSS;
+  headOrRoot.appendChild(styleEl);
+}
+const SPLIT_CASCADE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FLOATING_CARD_WIDTH = 522;
 const POPOVER_BASE_WIDTH = 540;
 const POPOVER_MAX_AUTO_WIDTH = 960;
 const MULTI_PANEL_WIDTH = 464;
 
+function isAnyOverlayHostNode(node) {
+  if (!node) return false;
+  if (
+    node.id === CAPSULE_HOST_ID ||
+    node.id === PORTAL_HOST_ID ||
+    node.classList?.contains?.('wm-capsule-host') ||
+    node.classList?.contains?.('wm-portal-host')
+  ) {
+    return true;
+  }
+  return Boolean(node.closest?.('.wm-capsule-host, .wm-portal-host'));
+}
+
+function resolveNodeCascadeId(node) {
+  let cur = node;
+  while (cur) {
+    const cid = String(cur.getAttribute?.('data-cascade-id') || '').trim();
+    if (SPLIT_CASCADE_UUID_RE.test(cid)) return cid;
+    cur = cur.parentElement || cur.parentNode;
+  }
+  return '';
+}
+
+function findVisibleConversationViews() {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') {
+    return [];
+  }
+  const out = [];
+  let raw = document.querySelectorAll('[data-testid="conversation-view"]');
+  if (!raw || raw.length === 0) {
+    raw = document.querySelectorAll('[data-testid="conversation-view"][data-cascade-id]');
+  }
+  for (const el of raw) {
+    if (!el || el.hasAttribute?.('hidden') || el.getAttribute?.('aria-hidden') === 'true') continue;
+    if (el.getBoundingClientRect) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 80 || r.height <= 80) continue;
+    }
+    const rawCid = String(el.getAttribute?.('data-cascade-id') || '').trim();
+    const cascadeId = SPLIT_CASCADE_UUID_RE.test(rawCid) ? rawCid : '__new__';
+    out.push({ el, cascadeId });
+  }
+  return out;
+}
+
 /**
- * 带迟滞区间（Hysteresis）的四阶段顶栏双胶囊响应式宽度计算，避免临界宽度反复跳动。
- * 当左侧多会话入口关闭（`showMulti === false`）时自动释放约 76px 预算给右侧指标胶囊；
- * 当槽位数超过 3 个（4..5 槽）时自动按槽位增量上浮 `wide` 阈值。
+ * Hysteresis 
+ * `showMulti === false` 76px 
+ * 3 4..5 `wide` 
  *
  * @param {number} availWidth
  * @param {'wide'|'compact'|'minimal'|'ring-only'} currentMode
@@ -79,31 +168,34 @@ export function computeCapsuleLayoutMode(availWidth, currentMode = 'wide', optio
   const showMulti = options?.showMulti !== false;
   const updateReserve = options?.hasUpdate ? 52 : 0;
   const slotCount = Number(options?.slotCount || 3);
+  const isTwoSlotOrFewer = slotCount <= 2;
   const extraSlotWidth = slotCount > 3 ? (slotCount - 3) * 58 : 0;
-  const wideKeep = 256 + extraSlotWidth;
-  const wideEnter = 272 + extraSlotWidth;
+  const wideKeep = isTwoSlotOrFewer ? 172 : 256 + extraSlotWidth;
+  const wideEnter = isTwoSlotOrFewer ? 188 : 272 + extraSlotWidth;
+  const minimalCut = isTwoSlotOrFewer ? 132 : 196;
+  const compactEnter = isTwoSlotOrFewer ? 148 : 212;
   const baseEffWidth = showMulti ? availWidth : availWidth + 76;
   const effWidth = baseEffWidth - updateReserve;
   if (currentMode === 'wide') {
     if (baseEffWidth < 78) return 'ring-only';
-    if (effWidth < 196) return 'minimal';
+    if (effWidth < minimalCut) return 'minimal';
     if (effWidth < wideKeep) return 'compact';
     return 'wide';
   }
   if (currentMode === 'compact') {
     if (effWidth >= wideEnter) return 'wide';
     if (baseEffWidth < 78) return 'ring-only';
-    if (effWidth < 196) return 'minimal';
+    if (effWidth < minimalCut) return 'minimal';
     return 'compact';
   }
   if (currentMode === 'minimal') {
     if (effWidth >= wideEnter) return 'wide';
-    if (effWidth >= 212) return 'compact';
+    if (effWidth >= compactEnter) return 'compact';
     if (baseEffWidth < 78) return 'ring-only';
     return 'minimal';
   }
   if (effWidth >= wideEnter) return 'wide';
-  if (effWidth >= 212) return 'compact';
+  if (effWidth >= compactEnter) return 'compact';
   if (baseEffWidth >= 92) return 'minimal';
   return 'ring-only';
 }
@@ -163,14 +255,14 @@ function findHostTitlebar() {
 const COMPOSER_EXCLUDED_ANCESTOR_SELECTOR =
   '.part.titlebar, .part.statusbar, .quick-input-widget, .suggest-widget, .find-widget, .scm-editor, .search-view, [class*="@container/titlebar"]';
 const COMPOSER_MODEL_LABEL_RE =
-  /\b(?:gemini|claude|gpt|argon|carbon|hydrogen|helix|flash|sonnet|opus|haiku|orchestrator|llama|deepseek|qwen|mistral|model_placeholder|placeholder_m\d+|o[134](?:-\w+)?)\b/i;
+  /\b(?:gemini|claude|gpt|argon|carbon|hydrogen|helix|neon|flash|sonnet|opus|haiku|orchestrator|llama|deepseek|qwen|mistral|model_placeholder|placeholder_m\d+|o[134](?:-\w+)?)\b/i;
 const COMPOSER_MODEL_ATTR_RE =
-  /\bmodel[-_\s]?(?:select|picker|switch|selector|menu|name)\b|选择模型|切换模型/i;
-const COMPOSER_MODE_EXACT_RE = /^(?:auto|自动)$/i;
+  /\bmodel[-_\s]?(?:select|picker|switch|selector|menu|name)\b/i;
+const COMPOSER_MODE_EXACT_RE = /^(?:auto)$/i;
 const COMPOSER_MODE_TEXT_RE =
-  /^(?:auto|ask|manual|supervised|autonomous|always\s*allow|turbo|safe|yolo|plan|act|review|confirm|normal|fast|自动|询问|手动|始终允许|受控|规划)(?:\s*(?:mode|模式))?$/i;
+  /^(?:auto|ask|manual|supervised|autonomous|always\s*allow|turbo|safe|yolo|plan|act|review|confirm|normal|fast)(?:\s*mode)?$/i;
 const COMPOSER_MODE_ATTR_RE =
-  /\b(?:auto(?:nomy|matic)?|execution[-_]?mode|agent[-_]?mode|permission|approval|hitl|policy|mode[-_]?selector|mode[-_]?picker)\b|自动|执行模式|权限模式|审批/i;
+  /\b(?:auto(?:nomy|matic)?|execution[-_]?mode|agent[-_]?mode|permission|approval|hitl|policy|mode[-_]?selector|mode[-_]?picker)\b/i;
 const COMPOSER_ICON_FONT_CLASS_RE =
   /\b(?:codicon|material-symbols(?:-\w+)?|material-icons(?:-\w+)?|lucide(?:-\w+)?)\b/i;
 
@@ -240,7 +332,7 @@ function hasExcludedComposerAncestor(el) {
     try {
       if (el.closest(COMPOSER_EXCLUDED_ANCESTOR_SELECTOR)) return true;
     } catch {
-      // 忽略选择器异常并回退祖先链遍历
+      
     }
   }
   let cur = el.parentElement || el.parentNode;
@@ -270,7 +362,7 @@ function isNodeHiddenByStyle(el) {
       const cs = window.getComputedStyle(el);
       if (cs?.display === 'none' || cs?.visibility === 'hidden') return true;
     } catch {
-      // 忽略样式读取异常
+      
     }
   }
   return false;
@@ -281,7 +373,7 @@ function getInFlowHostChildren(container, capsuleNode, portalNode) {
   const out = [];
   for (const ch of rawChildren) {
     if (!ch || ch === capsuleNode || ch === portalNode) continue;
-    if (ch.id === CAPSULE_HOST_ID || ch.id === PORTAL_HOST_ID) continue;
+    if (isAnyOverlayHostNode(ch)) continue;
     if (ch.hasAttribute?.('hidden')) continue;
     if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
       try {
@@ -289,7 +381,7 @@ function getInFlowHostChildren(container, capsuleNode, portalNode) {
         if (cs?.display === 'none') continue;
         if (cs?.position === 'absolute' || cs?.position === 'fixed') continue;
       } catch {
-        // 忽略计算样式异常
+        
       }
     }
     out.push(ch);
@@ -308,7 +400,7 @@ function isHorizontalFlexContainer(el) {
       const dir = String(cs?.flexDirection || 'row');
       if (disp.includes('flex') && !dir.startsWith('column')) return true;
     } catch {
-      // 忽略计算样式异常
+      
     }
   }
   return false;
@@ -325,7 +417,7 @@ function isSpaceDistributedFlexContainer(el) {
         return true;
       }
     } catch {
-      // 忽略计算样式异常
+      
     }
   }
   return false;
@@ -387,7 +479,7 @@ function buildComposerDockDescriptor(autoBtn, composerCard, bottomRowBtns, capsu
           computedLargeMl = true;
         }
       } catch {
-        // 忽略边距测量异常
+        
       }
     }
 
@@ -417,6 +509,53 @@ function buildComposerDockDescriptor(autoBtn, composerCard, bottomRowBtns, capsu
     }
   }
 
+  let permLayout = null;
+  const cleanPermText = cleanComposerButtonText(autoBtn);
+  const permAttrText = `${autoBtn.getAttribute?.('data-testid') || ''} ${autoBtn.getAttribute?.('aria-label') || ''} ${autoBtn.getAttribute?.('title') || ''}`;
+  const isPermissionBtn = Boolean(
+    autoBtn.getAttribute?.('data-testid') === 'permissions-selector-trigger' ||
+      COMPOSER_MODE_EXACT_RE.test(cleanPermText) ||
+      COMPOSER_MODE_TEXT_RE.test(cleanPermText) ||
+      COMPOSER_MODE_ATTR_RE.test(permAttrText)
+  );
+  if (isPermissionBtn && anchorIdx >= 0) {
+    const trailingInTarget = hostChildren.slice(anchorIdx + 1);
+    const parentRow = targetContainer.parentElement || targetContainer.parentNode;
+    if (
+      targetContainer !== composerCard &&
+      parentRow &&
+      parentRow !== document.body &&
+      isHorizontalFlexContainer(parentRow) &&
+      trailingInTarget.length >= 1
+    ) {
+      const rowChildren = getInFlowHostChildren(parentRow, capsuleNode, portalNode);
+      const tcIdx = rowChildren.indexOf(targetContainer);
+      if (tcIdx >= 1) {
+        permLayout = {
+          kind: 'nested-right',
+          rowEl: parentRow,
+          leftNodes: rowChildren.slice(0, tcIdx),
+          rightEl: targetContainer,
+          permEl: anchorNode,
+          actionEls: trailingInTarget,
+        };
+      }
+    } else if (
+      isHorizontalFlexContainer(targetContainer) &&
+      anchorIdx >= 1 &&
+      trailingInTarget.length >= 1
+    ) {
+      permLayout = {
+        kind: 'flat-row',
+        rowEl: targetContainer,
+        leftNodes: hostChildren.slice(0, anchorIdx),
+        rightEl: null,
+        permEl: anchorNode,
+        actionEls: trailingInTarget,
+      };
+    }
+  }
+
   return {
     kind: 'composer',
     workbench: null,
@@ -426,6 +565,7 @@ function buildComposerDockDescriptor(autoBtn, composerCard, bottomRowBtns, capsu
     anchorNode,
     needsAutoMarginTransfer,
     leftClusterRightEdge,
+    permLayout,
   };
 }
 
@@ -503,15 +643,14 @@ function collectComposerBottomButtons(container, editorEl, editorRect, capsuleNo
     if (!btn || btn === editorEl || editorEl?.contains?.(btn)) continue;
     if (editorEl && btn.contains?.(editorEl)) continue;
     if (
-      btn.id === CAPSULE_HOST_ID ||
-      btn.id === PORTAL_HOST_ID ||
+      isAnyOverlayHostNode(btn) ||
       capsuleNode?.contains?.(btn) ||
       portalNode?.contains?.(btn)
     ) {
       continue;
     }
     if (isNodeHiddenByStyle(btn)) continue;
-    // 仅排除嵌套在真实紧凑按钮内部的图标/子触发器，避免外层卡片级 role="button" 误杀工具栏按钮
+    // / role="button"
     let nestedInBtn = false;
     let p = btn.parentElement || btn.parentNode;
     while (p && p !== container) {
@@ -566,14 +705,14 @@ function pickAutoButtonFromRow(bottomRowBtns, containerRect, options = undefined
     ...bottomRowBtns.filter((b) => b.centerX < rightSplitX),
   ];
 
-  // Tier 1: 精确文本 Auto / 自动 匹配
+  // Tier 1: Auto /
   for (const item of rightFirst) {
     if (COMPOSER_MODE_EXACT_RE.test(item.cleanText)) {
       return { btn: item.btn, tier: 1 };
     }
   }
 
-  // Tier 2: 执行/权限模式文案或无障碍语义属性匹配（排除模型选择器按钮）
+  // Tier 2: /
   for (const item of rightFirst) {
     if (isComposerModelButtonItem(item)) continue;
     if (
@@ -586,7 +725,7 @@ function pickAutoButtonFromRow(bottomRowBtns, containerRect, options = undefined
 
   const hasModelBtn = bottomRowBtns.some(isComposerModelButtonItem);
 
-  // Tier 3: 几何右簇首按钮兜底（适配 Antigravity IDE 无 Auto 按钮、右侧为发送/语音按钮的输入栏布局）
+  // Tier 3: Antigravity IDE Auto /
   if (bottomRowBtns.length >= 2 && (!requireModelForFallback || hasModelBtn)) {
     let maxGap = -Infinity;
     let splitIdx = -1;
@@ -602,7 +741,7 @@ function pickAutoButtonFromRow(bottomRowBtns, containerRect, options = undefined
     }
   }
 
-  // Tier 4: 输入为空时若右侧发送按钮暂时隐藏、仅左侧存在模型选择器按钮，停靠至工具栏最右侧
+  // Tier 4:
   if (hasModelBtn && containerRect && containerRect.width >= 200) {
     const lastItem = bottomRowBtns[bottomRowBtns.length - 1];
     if (lastItem.rect.right <= containerRect.left + containerRect.width * 0.72) {
@@ -628,17 +767,26 @@ function resolveComposerEditorRect(ed) {
   return er || null;
 }
 
-function findHostComposerAutoTarget(capsuleNode = null, portalNode = null, patchedNode = null) {
+function findHostComposerAutoTarget(
+  capsuleNode = null,
+  portalNode = null,
+  patchedNode = null,
+  scopeRoot = null
+) {
   try {
-    if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') {
+    if (typeof document === 'undefined') {
+      return null;
+    }
+    const queryRoot = scopeRoot || document;
+    if (typeof queryRoot.querySelectorAll !== 'function') {
       return null;
     }
     const capEl = capsuleNode || document.getElementById?.(CAPSULE_HOST_ID) || null;
     const porEl = portalNode || document.getElementById?.(PORTAL_HOST_ID) || null;
     const activeRouteId = extractHostRouteCascadeId();
 
-    // 1. 优先从活跃会话的输入框编辑器向上定位底部工具栏与 Auto / 右簇发送按钮
-    const rawEditors = querySimpleSelectorList(document, [
+    // 1. Auto /
+    const rawEditors = querySimpleSelectorList(queryRoot, [
       'textarea',
       '[contenteditable]',
       '[role="textbox"]',
@@ -648,7 +796,7 @@ function findHostComposerAutoTarget(capsuleNode = null, portalNode = null, patch
     ]);
     const scoredEditors = [];
     for (const ed of rawEditors) {
-      if (!ed || capEl?.contains?.(ed) || porEl?.contains?.(ed)) continue;
+      if (!ed || capEl?.contains?.(ed) || porEl?.contains?.(ed) || isAnyOverlayHostNode(ed)) continue;
       if (ed.hasAttribute?.('contenteditable')) {
         const ce = String(ed.getAttribute('contenteditable') || '').trim().toLowerCase();
         if (ce === 'false' && ed.getAttribute?.('role') !== 'textbox') continue;
@@ -739,15 +887,15 @@ function findHostComposerAutoTarget(capsuleNode = null, portalNode = null, patch
       }
     }
 
-    // 2. 兜底路径：编辑器自定义封装或暂时只读时，直接扫描底部包含模型选择器或 Auto 按钮的输入工具栏
+    // 2. Auto
     const vh = Number(window.innerHeight || 800);
-    const allBtns = querySimpleSelectorList(document, ['button', '[role="button"]', '[aria-haspopup]']);
+    const allBtns = querySimpleSelectorList(queryRoot, ['button', '[role="button"]', '[aria-haspopup]']);
     let modelToolbarFallback = null;
     for (const btn of allBtns) {
-      if (!btn || capEl?.contains?.(btn) || porEl?.contains?.(btn)) continue;
+      if (!btn || capEl?.contains?.(btn) || porEl?.contains?.(btn) || isAnyOverlayHostNode(btn)) continue;
       if (isNodeHiddenByStyle(btn) || hasExcludedComposerAncestor(btn)) continue;
       const br = btn.getBoundingClientRect?.();
-      if (!br || br.width <= 0 || br.height <= 0 || br.height > 48 || br.top < vh * 0.2) continue;
+      if (!br || br.width <= 0 || br.height <= 0 || br.height > 48 || (!scopeRoot && br.top < vh * 0.12)) continue;
       const clean = cleanComposerButtonText(btn);
       const attr = `${btn.getAttribute?.('data-testid') || ''} ${btn.getAttribute?.('aria-label') || ''} ${btn.getAttribute?.('title') || ''}`.trim();
       const itemProbe = { cleanText: clean, attrText: attr };
@@ -800,7 +948,7 @@ function findHostComposerAutoTarget(capsuleNode = null, portalNode = null, patch
     }
     if (modelToolbarFallback) return modelToolbarFallback;
   } catch {
-    // 忽略输入框探测异常
+    
   }
   return null;
 }
@@ -822,18 +970,98 @@ function isImmediatelyBeforeNode(node, refNode) {
 function isIdeExtensionChatFrame() {
   try {
     if (typeof window === 'undefined') return false;
-    if (readInjectedWindowBridge()?.isIdeChatFrame === true) return true;
+    if (window.__AGUsageMonitorBridge?.isIdeChatFrame === true) return true;
     return /[?&]extension(?:View|Variant)=/i.test(String(window.location?.search || ''));
   } catch {
     return false;
   }
 }
 
+function buildFlowTitlebarDescriptor(titlebar) {
+  if (!titlebar) return null;
+  let targetContainer = titlebar;
+  try {
+    const rightGroup = titlebar.querySelector(':scope > div.shrink-0') || titlebar.lastElementChild;
+    if (rightGroup && rightGroup !== titlebar.firstElementChild) {
+      targetContainer = rightGroup;
+    }
+  } catch {
+    
+  }
+  return {
+    kind: 'flow',
+    workbench: null,
+    titlebar,
+    targetContainer,
+    actionToolbar: null,
+    cascadeId: resolveNodeCascadeId(targetContainer) || resolveNodeCascadeId(titlebar),
+  };
+}
+
+function findSecondarySplitDockTargets(primaryDock, mountMode, portalNode = null) {
+  if (
+    typeof document === 'undefined' ||
+    typeof document.querySelectorAll !== 'function' ||
+    isIdeExtensionChatFrame() ||
+    !primaryDock ||
+    mountMode === 'sidebar'
+  ) {
+    return [];
+  }
+
+  const usedContainers = new Set([primaryDock.targetContainer].filter(Boolean));
+  const usedTitlebars = new Set([primaryDock.titlebar].filter(Boolean));
+  const out = [];
+
+  // 1. If Antigravity Split View renders multiple @container/titlebar headers (one per split pane)
+  if (mountMode !== 'composer' && primaryDock.kind !== 'ide-titlebar') {
+    const titlebars = document.querySelectorAll('[class*="@container/titlebar"]');
+    for (const tb of titlebars) {
+      if (!tb || usedTitlebars.has(tb) || isAnyOverlayHostNode(tb)) continue;
+      if (tb.getBoundingClientRect) {
+        const r = tb.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+      }
+      const desc = buildFlowTitlebarDescriptor(tb);
+      if (!desc || !desc.targetContainer || usedContainers.has(desc.targetContainer)) continue;
+      usedTitlebars.add(tb);
+      usedContainers.add(desc.targetContainer);
+      out.push({ keyNode: desc.targetContainer, ...desc });
+    }
+  }
+
+  // 2. For visible split conversation panes without their own docked capsule, dock on each pane's composer
+  const convViews = findVisibleConversationViews();
+  if (convViews.length >= 2) {
+    for (const { el: convViewEl, cascadeId } of convViews) {
+      let alreadyHasCapsule = false;
+      for (const container of usedContainers) {
+        if (convViewEl.contains?.(container)) {
+          alreadyHasCapsule = true;
+          break;
+        }
+      }
+      if (alreadyHasCapsule) continue;
+      const compDock = findHostComposerAutoTarget(null, portalNode, null, convViewEl);
+      if (compDock && compDock.targetContainer && !usedContainers.has(compDock.targetContainer)) {
+        usedContainers.add(compDock.targetContainer);
+        out.push({
+          keyNode: compDock.targetContainer,
+          ...compDock,
+          cascadeId,
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
 function resolveActiveDockTarget(options = undefined) {
   const settings = telemetryStore.getState().telemetry?.settings;
   const rawMode =
     settings?.windowMountMode ??
-    readInjectedWindowBridge()?.mountMode;
+    (typeof window !== 'undefined' ? window.__AGUsageMonitorBridge?.mountMode : undefined);
   const mountMode =
     options?.mountMode ||
     normalizeClientWindowMountMode(rawMode, settings?.enableWindowOverlay);
@@ -846,33 +1074,42 @@ function resolveActiveDockTarget(options = undefined) {
     );
   }
   if (mountMode === 'composer') {
-    const composerTarget = findHostComposerAutoTarget(
-      options?.capsuleNode || null,
-      options?.portalNode || null,
-      options?.patchedNode || null
-    );
-    if (composerTarget) return composerTarget;
+    let scopeRoot = null;
+    const convViews = findVisibleConversationViews();
+    if (convViews.length >= 2) {
+      const capEl = options?.capsuleNode || null;
+      const pinnedView =
+        (capEl && convViews.find((v) => v.el?.contains?.(capEl))) || convViews[0];
+      scopeRoot = pinnedView?.el || null;
+    }
+    const composerTarget =
+      (scopeRoot &&
+        findHostComposerAutoTarget(
+          options?.capsuleNode || null,
+          options?.portalNode || null,
+          options?.patchedNode || null,
+          scopeRoot
+        )) ||
+      findHostComposerAutoTarget(
+        options?.capsuleNode || null,
+        options?.portalNode || null,
+        options?.patchedNode || null
+      );
+    if (composerTarget) {
+      const resolvedCid =
+        resolveNodeCascadeId(composerTarget.targetContainer) ||
+        resolveNodeCascadeId(composerTarget.titlebar);
+      const routeCid = !resolvedCid ? extractHostRouteCascadeId() : '';
+      return {
+        ...composerTarget,
+        cascadeId: resolvedCid || (routeCid === '__new__' ? '__new__' : ''),
+      };
+    }
   }
   const ideTarget = findIdeWorkbenchTitlebar();
   if (ideTarget) return ideTarget;
   const titlebar = findHostTitlebar();
-  if (!titlebar) return null;
-  let targetContainer = titlebar;
-  try {
-    const rightGroup = titlebar.querySelector(':scope > div.shrink-0') || titlebar.lastElementChild;
-    if (rightGroup && rightGroup !== titlebar.firstElementChild) {
-      targetContainer = rightGroup;
-    }
-  } catch {
-    // 忽略子选择器不兼容场景
-  }
-  return {
-    kind: 'flow',
-    workbench: null,
-    titlebar,
-    targetContainer,
-    actionToolbar: null,
-  };
+  return buildFlowTitlebarDescriptor(titlebar);
 }
 
 function findNativeTopRightAnchor() {
@@ -888,7 +1125,7 @@ function findNativeTopRightAnchor() {
     for (const btn of candidates) {
       const text = String(btn.textContent || '').trim();
       if (
-        (text === 'Open IDE' || text === '打开 IDE' || text.includes('Open IDE') || text.includes('打开 IDE')) &&
+        (text === 'Open IDE' || text.includes('Open IDE')) &&
         btn.getBoundingClientRect?.().top < 52
       ) {
         return btn.closest?.('div.flex.items-center, div.absolute.right-0') || btn;
@@ -915,18 +1152,18 @@ function getLeftSidebarRightEdge(vw) {
       }
     }
   } catch {
-    // 忽略侧栏测量异常
+    
   }
   return 0;
 }
 
 /**
- * 在主窗口挂载双栖顶栏胶囊与完整四标签悬浮面板，并注册 `window.__AGUsageMonitorOverlay` 生命周期句柄。
+ * `window.__AGUsageMonitorOverlay` 
  */
 export function mountWindowOverlay() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return null;
 
-  // 先读取旧实例缓存的遥测快照与展开态（热升级时无缝承接数据与悬停状态，杜绝闪烁或关开），再安全卸载旧实例
+  
   let carryOverTelemetry = null;
   let carryOverTooltipOpen = false;
   let carryOverPopoverOpen = false;
@@ -934,22 +1171,27 @@ export function mountWindowOverlay() {
   let carryOverMultiPinnedOpen = false;
   let carryOverPointer = null;
   try {
-    const prevOv = window[WINDOW_OVERLAY_KEY];
+    const prevOv = window.__AGUsageMonitorOverlay;
     carryOverTelemetry = prevOv?.getTelemetrySnapshot?.() || null;
     carryOverTooltipOpen = Boolean(prevOv?.isHoverOpen?.());
     carryOverPopoverOpen = Boolean(prevOv?.isOpen?.());
     carryOverMultiHoverOpen = Boolean(prevOv?.isMultiHoverOpen?.());
     carryOverMultiPinnedOpen = Boolean(prevOv?.isMultiPinnedOpen?.());
     carryOverPointer = prevOv?.getLastPointer?.() || null;
-    prevOv?.[WINDOW_OVERLAY_METHODS.dispose]?.();
+    prevOv?.dispose?.();
   } catch {
-    // 忽略旧实例卸载异常
+    
   }
   try {
     document.getElementById(CAPSULE_HOST_ID)?.remove?.();
     document.getElementById(PORTAL_HOST_ID)?.remove?.();
+    if (typeof document.querySelectorAll === 'function') {
+      for (const stale of document.querySelectorAll('.wm-split-capsule')) {
+        stale?.remove?.();
+      }
+    }
   } catch {
-    // 忽略残留节点清理异常
+    
   }
 
   const bridgeConfig = getWindowBridgeConfig();
@@ -980,6 +1222,9 @@ export function mountWindowOverlay() {
   let multiPinned = false;
   let hoverLeaveTimer = null;
   let multiLeaveTimer = null;
+  const manualSubExpandMap = new Map();
+  const multiTimersMap = new Map();
+  let multiLiveTickTimer = null;
   let hasPointerCoords = Boolean(
     carryOverPointer &&
       Number.isFinite(carryOverPointer.x) &&
@@ -991,6 +1236,20 @@ export function mountWindowOverlay() {
   let observedTitlebar = null;
   let dockRafId = 0;
   let lastObservedRouteId = extractHostRouteCascadeId();
+  const splitCapsulesMap = new Map();
+  let activeAnchorSurface = null;
+
+  function setActiveCapsuleAnchor(surface) {
+    if (surface) activeAnchorSurface = surface;
+  }
+
+  function getActiveAnchorSurface() {
+    return activeAnchorSurface || primarySurface;
+  }
+
+  function getAllCapsuleSurfaces() {
+    return [primarySurface, ...splitCapsulesMap.values()];
+  }
 
   function recordPointerCoords(e) {
     if (e && Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
@@ -1001,14 +1260,15 @@ export function mountWindowOverlay() {
   }
 
   function isPointerStillInCapsule() {
-    if (!hasPointerCoords || document.hidden || !capsuleBtn.getBoundingClientRect) {
+    const surf = getActiveAnchorSurface();
+    if (!hasPointerCoords || document.hidden || !surf?.capsuleBtn?.getBoundingClientRect) {
       return false;
     }
-    const r = capsuleBtn.getBoundingClientRect();
+    const r = surf.capsuleBtn.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return false;
     let rightBound = r.right;
-    if (!topbarUpdateBtn.hasAttribute('hidden') && topbarUpdateBtn.getBoundingClientRect) {
-      const ur = topbarUpdateBtn.getBoundingClientRect();
+    if (!surf.topbarUpdateBtn.hasAttribute('hidden') && surf.topbarUpdateBtn.getBoundingClientRect) {
+      const ur = surf.topbarUpdateBtn.getBoundingClientRect();
       if (ur.width > 0 && ur.height > 0) {
         rightBound = Math.max(rightBound, ur.right);
       }
@@ -1022,12 +1282,13 @@ export function mountWindowOverlay() {
   }
 
   function isPointerInMultiZone() {
-    if (!hasPointerCoords || document.hidden || multiBtn.hasAttribute('hidden')) {
+    const surf = getActiveAnchorSurface();
+    if (!hasPointerCoords || document.hidden || surf?.multiBtn?.hasAttribute?.('hidden')) {
       return false;
     }
     const bridgePad = multiOpen ? 12 : 1;
-    if (multiBtn.getBoundingClientRect) {
-      const mr = multiBtn.getBoundingClientRect();
+    if (surf.multiBtn.getBoundingClientRect) {
+      const mr = surf.multiBtn.getBoundingClientRect();
       if (
         mr.width > 0 &&
         mr.height > 0 &&
@@ -1062,10 +1323,11 @@ export function mountWindowOverlay() {
     multiLeaveTimer = setTimeout(() => {
       multiLeaveTimer = null;
       if (disposed || multiPinned || !multiOpen) return;
+      const surf = getActiveAnchorSurface();
       let nativeHover = false;
       try {
         nativeHover = Boolean(
-          multiBtn.matches?.(':hover') || multiPanelEl.matches?.(':hover')
+          surf?.multiBtn?.matches?.(':hover') || multiPanelEl.matches?.(':hover')
         );
       } catch {
         nativeHover = false;
@@ -1075,6 +1337,52 @@ export function mountWindowOverlay() {
       }
       setMultiOpen(false);
     }, 90);
+  }
+
+  function bindMultiElapsedTimer(timerKey, sig, rawStartMs, targetEl) {
+    const now = Date.now();
+    const prev = multiTimersMap.get(timerKey);
+    let startMs = prev?.startMs || 0;
+    if (!prev || prev.sig !== sig) {
+      const validRaw = Number(rawStartMs || 0);
+      startMs = validRaw > 0 && validRaw <= now + 2000 ? validRaw : now;
+    } else if (startMs <= 0 && Number(rawStartMs) > 0 && Number(rawStartMs) <= now + 2000) {
+      startMs = Number(rawStartMs);
+    }
+    multiTimersMap.set(timerKey, { sig, startMs, el: targetEl });
+    const elapsedSec = Math.max(0, (now - startMs) / 1000);
+    patchText(targetEl, formatElapsedSec(elapsedSec));
+  }
+
+  function tickMultiElapsedDisplay() {
+    const now = Date.now();
+    for (const entry of multiTimersMap.values()) {
+      if (!entry?.el) continue;
+      const elapsedSec = entry.startMs > 0 ? Math.max(0, (now - entry.startMs) / 1000) : 0;
+      patchText(entry.el, formatElapsedSec(elapsedSec));
+    }
+  }
+
+  function pauseMultiLiveTicker() {
+    if (multiLiveTickTimer) {
+      clearInterval(multiLiveTickTimer);
+      multiLiveTickTimer = null;
+    }
+  }
+
+  function stopMultiLiveTicker() {
+    pauseMultiLiveTicker();
+    multiTimersMap.clear();
+  }
+
+  function ensureMultiLiveTicker() {
+    if (multiTimersMap.size === 0) {
+      stopMultiLiveTicker();
+      return;
+    }
+    if (!multiLiveTickTimer) {
+      multiLiveTickTimer = setInterval(tickMultiElapsedDisplay, 1000);
+    }
   }
 
   function inspectSessionInMonitor(cascadeId) {
@@ -1090,240 +1398,311 @@ export function mountWindowOverlay() {
     setPopoverOpen(true);
   }
 
-  // --- 1. 创建顶栏/输入框双胶囊 Shadow Host（左：多会话实时信息；右：单会话指标胶囊） ---
-  const capsuleHost = document.createElement('div');
-  capsuleHost.id = CAPSULE_HOST_ID;
-  capsuleHost.className = 'wm-capsule-host';
-  capsuleHost.setAttribute('data-dock', 'fixed');
-  capsuleHost.setAttribute('data-layout', layoutMode);
-  // 隔离冒泡事件，防止嵌入输入框工具栏时点击或回车误触外层编辑框聚焦或表单提交
-  capsuleHost.addEventListener?.('mousedown', (e) => e.stopPropagation?.());
-  capsuleHost.addEventListener?.('click', (e) => e.stopPropagation?.());
-  capsuleHost.addEventListener?.('keydown', (e) => {
-    if (e?.key !== 'Escape') {
-      e.stopPropagation?.();
-    }
-  });
-  const capsuleShadow = capsuleHost.attachShadow({ mode: 'open' });
-
-  const capsuleStyleEl = document.createElement('style');
-  capsuleStyleEl.textContent = stylesCss;
-  capsuleShadow.appendChild(capsuleStyleEl);
-
-  // 左侧无边框多会话实时触发按钮（固定预占宽度，不随运行数跳动）
-  const multiDot = h('span', { className: 'wm-multi-dot' });
-  const multiLabel = h('span', { className: 'wm-multi-label', text: t('capsule.multiZero') });
-  const multiBtn = h(
-    'button',
-    {
-      type: 'button',
-      className: 'wm-multi-btn',
-      'aria-label': t('capsule.ariaMulti'),
-      'aria-expanded': 'false',
-      onClick: (e) => {
-        e.stopPropagation();
-        if (multiOpen && multiPinned) {
-          setMultiOpen(false);
-        } else {
-          setMultiOpen(true, { pinned: true });
-        }
-      },
-      onContextmenu: (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        void fetchTelemetry({ force: true });
-      },
-      onMouseenter: (e) => {
-        recordPointerCoords(e);
-        if (multiLeaveTimer) {
-          clearTimeout(multiLeaveTimer);
-          multiLeaveTimer = null;
-        }
-        if (!popoverOpen && !multiPinned) {
-          setMultiOpen(true, { pinned: false });
-        }
-      },
-      onMouseleave: (e) => {
-        recordPointerCoords(e);
-        if (!multiPinned) {
-          scheduleMultiHoverClose();
-        }
-      },
-    },
-    [multiDot, multiLabel]
-  );
-
-  // 构建可复用的预占胶囊槽位节点（由 CapsuleBarWidget 共享创建，支持 1..5 项动态槽位）
-  const capsuleSlots = [
-    createCapsuleSlotNode(0, 'tps'),
-    createCapsuleSlotNode(1, 'ttft'),
-    createCapsuleSlotNode(2, 'context'),
-    createCapsuleSlotNode(3, 'none'),
-    createCapsuleSlotNode(4, 'none'),
-  ];
-  const capsuleSeps = [
-    h('span', { className: 'wm-sep wm-sep-speed', 'data-sep-for-rank': '2' }),
-    h('span', { className: 'wm-sep wm-sep-quota', 'data-sep-for-rank': '3' }),
-    h('span', { className: 'wm-sep', 'data-sep-for-rank': '', hidden: true }),
-    h('span', { className: 'wm-sep', 'data-sep-for-rank': '', hidden: true }),
-  ];
-  let lastSlotCount = 3;
-  let lastShowMulti = true;
-  let lastShowUpdate = false;
+  // --- 1. / Shadow Host Split View ---
   let isTopbarUpdating = false;
 
-  const updateDot = h('span', { className: 'wm-update-dot', hidden: true });
-  const topbarUpdateIcon = createSvgIcon('arrow-down', { size: 10 });
-  const topbarUpdateLabel = h('span', {
-    className: 'wm-update-label',
-    text: t('capsule.newVersion'),
-  });
-  const topbarUpdateBtn = h(
-    'button',
-    {
-      type: 'button',
-      className: 'wm-update-btn',
-      hidden: true,
-      'aria-label': t('capsule.ariaUpdateTitle'),
-      title: t('capsule.ariaUpdateTitle'),
-      onClick: async (e) => {
-        e.stopPropagation();
-        if (isTopbarUpdating) return;
-        isTopbarUpdating = true;
-        patchClasses(topbarUpdateBtn, { 'is-updating': true });
-        patchSvgIcon(topbarUpdateIcon, 'refresh');
-        patchText(topbarUpdateLabel, t('capsule.updating'));
-        patchAttr(topbarUpdateBtn, 'disabled', true);
-        try {
-          const res = await triggerPluginUpdate();
-          if (!res?.ok) {
+  function createCapsuleSurfaceInstance({ isPrimary = false } = {}) {
+    const hostEl = document.createElement('div');
+    if (isPrimary) {
+      hostEl.id = CAPSULE_HOST_ID;
+      hostEl.className = 'wm-capsule-host';
+    } else {
+      hostEl.className = 'wm-capsule-host wm-split-capsule';
+    }
+    hostEl.setAttribute('data-dock', 'fixed');
+    hostEl.setAttribute('data-layout', 'wide');
+    
+    hostEl.addEventListener?.('mousedown', (e) => e.stopPropagation?.());
+    hostEl.addEventListener?.('click', (e) => e.stopPropagation?.());
+    hostEl.addEventListener?.('keydown', (e) => {
+      if (e?.key !== 'Escape') {
+        e.stopPropagation?.();
+      }
+    });
+    const shadow = hostEl.attachShadow({ mode: 'open' });
+    const styleNode = document.createElement('style');
+    styleNode.textContent = stylesCss;
+    shadow.appendChild(styleNode);
+
+    const surface = {
+      isPrimary,
+      capsuleHost: hostEl,
+      multiBtn: null,
+      multiLabel: null,
+      capsuleBtn: null,
+      capsuleSlots: null,
+      capsuleSeps: null,
+      topbarUpdateBtn: null,
+      topbarUpdateIcon: null,
+      topbarUpdateLabel: null,
+      updateDot: null,
+      layoutMode: 'wide',
+      lastSlotCount: 3,
+      lastShowMulti: true,
+      lastShowUpdate: false,
+      cascadeId: '',
+      dockTarget: null,
+      patchedActionToolbar: null,
+      patchedActionToolbarPrevMargin: '',
+      appliedComposerPermLayout: null,
+    };
+
+    const mDot = h('span', { className: 'wm-multi-dot' });
+    const mLabel = h('span', { className: 'wm-multi-label', text: t('capsule.multiZero') });
+    const mBtn = h(
+      'button',
+      {
+        type: 'button',
+        className: 'wm-multi-btn',
+        'aria-label': t('capsule.ariaMulti'),
+        'aria-expanded': 'false',
+        onClick: (e) => {
+          e.stopPropagation();
+          const sameAnchor = getActiveAnchorSurface() === surface;
+          setActiveCapsuleAnchor(surface);
+          if (multiOpen && multiPinned && sameAnchor) {
+            setMultiOpen(false);
+          } else {
+            setMultiOpen(true, { pinned: true });
+          }
+        },
+        onContextmenu: (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void fetchTelemetry({ force: true });
+        },
+        onMouseenter: (e) => {
+          recordPointerCoords(e);
+          setActiveCapsuleAnchor(surface);
+          if (multiLeaveTimer) {
+            clearTimeout(multiLeaveTimer);
+            multiLeaveTimer = null;
+          }
+          if (!popoverOpen && !multiPinned) {
+            setMultiOpen(true, { pinned: false });
+          }
+        },
+        onMouseleave: (e) => {
+          recordPointerCoords(e);
+          if (!multiPinned) {
+            scheduleMultiHoverClose();
+          }
+        },
+      },
+      [mDot, mLabel]
+    );
+
+    const slots = [
+      createCapsuleSlotNode(0, 'tps'),
+      createCapsuleSlotNode(1, 'ttft'),
+      createCapsuleSlotNode(2, 'context'),
+      createCapsuleSlotNode(3, 'none'),
+      createCapsuleSlotNode(4, 'none'),
+    ];
+    const seps = [
+      h('span', { className: 'wm-sep wm-sep-speed', 'data-sep-for-rank': '2' }),
+      h('span', { className: 'wm-sep wm-sep-quota', 'data-sep-for-rank': '3' }),
+      h('span', { className: 'wm-sep', 'data-sep-for-rank': '', hidden: true }),
+      h('span', { className: 'wm-sep', 'data-sep-for-rank': '', hidden: true }),
+    ];
+
+    const uDot = h('span', { className: 'wm-update-dot', hidden: true });
+    const uIcon = createSvgIcon('arrow-down', { size: 10 });
+    const uLabel = h('span', {
+      className: 'wm-update-label',
+      text: t('capsule.newVersion'),
+    });
+    const uBtn = h(
+      'button',
+      {
+        type: 'button',
+        className: 'wm-update-btn',
+        hidden: true,
+        'aria-label': t('capsule.ariaUpdateTitle'),
+        title: t('capsule.ariaUpdateTitle'),
+        onClick: async (e) => {
+          e.stopPropagation();
+          setActiveCapsuleAnchor(surface);
+          if (isTopbarUpdating) return;
+          isTopbarUpdating = true;
+          patchClasses(uBtn, { 'is-updating': true });
+          patchSvgIcon(uIcon, 'refresh');
+          patchText(uLabel, t('capsule.updating'));
+          patchAttr(uBtn, 'disabled', true);
+          try {
+            const res = await triggerPluginUpdate();
+            if (!res?.ok) {
+              uiStore.setState({ activeView: 'settings' });
+              setPopoverOpen(true);
+            }
+          } catch {
             uiStore.setState({ activeView: 'settings' });
             setPopoverOpen(true);
-          }
-        } catch {
-          uiStore.setState({ activeView: 'settings' });
-          setPopoverOpen(true);
-        } finally {
-          isTopbarUpdating = false;
-          patchClasses(topbarUpdateBtn, { 'is-updating': false });
-          patchSvgIcon(topbarUpdateIcon, 'arrow-down');
-          patchAttr(topbarUpdateBtn, 'disabled', false);
-          const cs = telemetryStore.getState().telemetry?.cloudStatus;
-          patchText(
-            topbarUpdateLabel,
-            cs?.latestPluginVersion ? `v${cs.latestPluginVersion}` : t('capsule.newVersion')
-          );
-        }
-      },
-      onMouseenter: (e) => {
-        recordPointerCoords(e);
-        if (hoverLeaveTimer) {
-          clearTimeout(hoverLeaveTimer);
-          hoverLeaveTimer = null;
-        }
-        if (!popoverOpen && !multiPinned) {
-          if (multiOpen) {
-            setMultiOpen(false);
-          }
-          setTooltipOpen(true);
-        }
-      },
-      onMouseleave: (e) => {
-        recordPointerCoords(e);
-        if (hoverLeaveTimer) {
-          clearTimeout(hoverLeaveTimer);
-        }
-        hoverLeaveTimer = setTimeout(() => {
-          hoverLeaveTimer = null;
-          if (disposed || popoverOpen) return;
-          let nativeHover = false;
-          try {
-            nativeHover = Boolean(
-              capsuleBtn.matches?.(':hover') || topbarUpdateBtn.matches?.(':hover')
+          } finally {
+            isTopbarUpdating = false;
+            patchClasses(uBtn, { 'is-updating': false });
+            patchSvgIcon(uIcon, 'arrow-down');
+            patchAttr(uBtn, 'disabled', false);
+            const cs = telemetryStore.getState().telemetry?.cloudStatus;
+            patchText(
+              uLabel,
+              cs?.latestPluginVersion ? `v${cs.latestPluginVersion}` : t('capsule.newVersion')
             );
-          } catch {
-            nativeHover = false;
           }
-          if (nativeHover || isPointerStillInCapsule()) {
+        },
+        onMouseenter: (e) => {
+          recordPointerCoords(e);
+          setActiveCapsuleAnchor(surface);
+          if (hoverLeaveTimer) {
+            clearTimeout(hoverLeaveTimer);
+            hoverLeaveTimer = null;
+          }
+          if (!popoverOpen && !multiPinned) {
+            if (multiOpen) {
+              setMultiOpen(false);
+            }
+            setTooltipOpen(true);
+          }
+        },
+        onMouseleave: (e) => {
+          recordPointerCoords(e);
+          if (hoverLeaveTimer) {
+            clearTimeout(hoverLeaveTimer);
+          }
+          hoverLeaveTimer = setTimeout(() => {
+            hoverLeaveTimer = null;
+            if (disposed || popoverOpen) return;
+            let nativeHover = false;
+            try {
+              nativeHover = Boolean(cBtn.matches?.(':hover') || uBtn.matches?.(':hover'));
+            } catch {
+              nativeHover = false;
+            }
+            if (nativeHover || isPointerStillInCapsule()) {
+              return;
+            }
+            setTooltipOpen(false);
+          }, 40);
+        },
+      },
+      [uIcon, uLabel]
+    );
+
+    const cBtn = h(
+      'button',
+      {
+        type: 'button',
+        className: 'wm-capsule-btn',
+        'aria-label': t('capsule.ariaMonitor'),
+        'aria-expanded': 'false',
+        onClick: (e) => {
+          e.stopPropagation();
+          const sameAnchor = getActiveAnchorSurface() === surface;
+          setActiveCapsuleAnchor(surface);
+          const targetCid = String(surface.cascadeId || '').trim();
+          const curActiveCid = String(
+            telemetryStore.getState().telemetry?.activeConversation?.cascadeId || ''
+          ).trim();
+          if (targetCid && targetCid.toLowerCase() !== curActiveCid.toLowerCase()) {
+            telemetryStore.setState({ selectedConversationId: targetCid });
+            void fetchTelemetry({ force: false });
+            setPopoverOpen(true);
             return;
           }
-          setTooltipOpen(false);
-        }, 40);
+          setPopoverOpen(sameAnchor ? !popoverOpen : true);
+        },
+        onContextmenu: (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void fetchTelemetry({ force: true });
+        },
+        onMouseenter: (e) => {
+          recordPointerCoords(e);
+          const prevAnchor = getActiveAnchorSurface();
+          setActiveCapsuleAnchor(surface);
+          if (hoverLeaveTimer) {
+            clearTimeout(hoverLeaveTimer);
+            hoverLeaveTimer = null;
+          }
+          if (!popoverOpen && !multiPinned) {
+            if (multiOpen) {
+              setMultiOpen(false);
+            }
+            if (tooltipOpen && prevAnchor !== surface) {
+              renderHoverWidgets();
+              positionFloatingElements();
+            }
+            setTooltipOpen(true);
+          }
+        },
+        onMouseleave: (e) => {
+          recordPointerCoords(e);
+          if (hoverLeaveTimer) {
+            clearTimeout(hoverLeaveTimer);
+          }
+          hoverLeaveTimer = setTimeout(() => {
+            hoverLeaveTimer = null;
+            if (disposed || popoverOpen) return;
+            let nativeHover = false;
+            try {
+              nativeHover = Boolean(cBtn.matches?.(':hover') || uBtn.matches?.(':hover'));
+            } catch {
+              nativeHover = false;
+            }
+            if (nativeHover || isPointerStillInCapsule()) {
+              return;
+            }
+            setTooltipOpen(false);
+          }, 40);
+        },
       },
-    },
-    [topbarUpdateIcon, topbarUpdateLabel]
-  );
+      [
+        slots[0].el,
+        seps[0],
+        slots[1].el,
+        seps[1],
+        slots[2].el,
+        seps[2],
+        slots[3].el,
+        seps[3],
+        slots[4].el,
+        uDot,
+      ]
+    );
 
-  const capsuleBtn = h(
-    'button',
-    {
-      type: 'button',
-      className: 'wm-capsule-btn',
-      'aria-label': t('capsule.ariaMonitor'),
-      'aria-expanded': 'false',
-      onClick: (e) => {
-        e.stopPropagation();
-        setPopoverOpen(!popoverOpen);
-      },
-      onContextmenu: (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        void fetchTelemetry({ force: true });
-      },
-      onMouseenter: (e) => {
-        recordPointerCoords(e);
-        if (hoverLeaveTimer) {
-          clearTimeout(hoverLeaveTimer);
-          hoverLeaveTimer = null;
-        }
-        if (!popoverOpen && !multiPinned) {
-          if (multiOpen) {
-            setMultiOpen(false);
-          }
-          setTooltipOpen(true);
-        }
-      },
-      onMouseleave: (e) => {
-        recordPointerCoords(e);
-        if (hoverLeaveTimer) {
-          clearTimeout(hoverLeaveTimer);
-        }
-        hoverLeaveTimer = setTimeout(() => {
-          hoverLeaveTimer = null;
-          if (disposed || popoverOpen) return;
-          let nativeHover = false;
-          try {
-            nativeHover = Boolean(
-              capsuleBtn.matches?.(':hover') || topbarUpdateBtn.matches?.(':hover')
-            );
-          } catch {
-            nativeHover = false;
-          }
-          if (nativeHover || isPointerStillInCapsule()) {
-            return;
-          }
-          setTooltipOpen(false);
-        }, 40);
-      },
-    },
-    [
-      capsuleSlots[0].el,
-      capsuleSeps[0],
-      capsuleSlots[1].el,
-      capsuleSeps[1],
-      capsuleSlots[2].el,
-      capsuleSeps[2],
-      capsuleSlots[3].el,
-      capsuleSeps[3],
-      capsuleSlots[4].el,
-      updateDot,
-    ]
-  );
-  capsuleShadow.appendChild(multiBtn);
-  capsuleShadow.appendChild(capsuleBtn);
-  capsuleShadow.appendChild(topbarUpdateBtn);
+    shadow.appendChild(mBtn);
+    shadow.appendChild(cBtn);
+    shadow.appendChild(uBtn);
 
-  // --- 2. 创建 Body 顶层浮层 Portal Shadow Host ---
+    surface.multiBtn = mBtn;
+    surface.multiLabel = mLabel;
+    surface.capsuleBtn = cBtn;
+    surface.capsuleSlots = slots;
+    surface.capsuleSeps = seps;
+    surface.topbarUpdateBtn = uBtn;
+    surface.topbarUpdateIcon = uIcon;
+    surface.topbarUpdateLabel = uLabel;
+    surface.updateDot = uDot;
+    return surface;
+  }
+
+  const primarySurface = createCapsuleSurfaceInstance({ isPrimary: true });
+  activeAnchorSurface = primarySurface;
+  const {
+    capsuleHost,
+    multiBtn,
+    multiLabel,
+    capsuleBtn,
+    capsuleSlots,
+    capsuleSeps,
+    topbarUpdateBtn,
+    topbarUpdateIcon,
+    topbarUpdateLabel,
+    updateDot,
+  } = primarySurface;
+  let { lastSlotCount, lastShowMulti, lastShowUpdate } = primarySurface;
+
+  // --- 2. Body Portal Shadow Host ---
   const portalHost = document.createElement('div');
   portalHost.id = PORTAL_HOST_ID;
   portalHost.className = 'wm-portal-host';
@@ -1334,8 +1713,10 @@ export function mountWindowOverlay() {
   portalShadow.appendChild(portalStyleEl);
 
   const initialSettings = telemetryStore.getState().telemetry?.settings;
+  applyAppearanceToRoot(capsuleHost, initialSettings, { includeFontScale: false });
+  applyAppearanceToRoot(portalHost, initialSettings, { includeFontScale: true });
 
-  // 悬停全景概览浮层（完全解耦至 widgetRegistry，由 hoverModules 动态驱动 0..4 个独立组件，零硬编码）
+  // widgetRegistry hoverModules 0..4
   const hoverUpdateVerText = h('span', { text: t('capsule.hoverNewVerGeneric') });
   const hoverUpdateHintText = h('span', {
     className: 'wm-hover-update-hint',
@@ -1373,7 +1754,105 @@ export function mountWindowOverlay() {
     [hoverUpdateBar, hoverWidgetsContainer]
   );
 
-  // 左侧多会话实时看板浮层（受控复用 LiveActivityWidget，保持零硬编码与同一套计时器状态机）
+  
+  function createMultiLiveSubRow() {
+    const subBadge = h('span', {
+      className: 'agent-badge badge-sub-1',
+      text: t('fmt.subBadge', { index: 1 }),
+    });
+    const subRole = h('span', { className: 'live-sub-role', text: t('fmt.subAgent') });
+    const subSummary = h('span', { className: 'live-sub-summary', text: '' });
+    const subElapsed = h('span', { className: 'live-sub-elapsed text-mono', text: '0s' });
+    const rowEl = h('div', { className: 'live-sub-row' }, [
+      h('div', { className: 'live-sub-left' }, [subBadge, subRole, subSummary]),
+      subElapsed,
+    ]);
+    return {
+      el: rowEl,
+      refs: { rowEl, subBadge, subRole, subSummary, subElapsed },
+    };
+  }
+
+  function createMultiLiveTaskCard() {
+    const dotIcon = createSvgIcon('dot', { size: 11 });
+    patchClasses(dotIcon, { 'is-pulsing': true });
+    const dotWrap = h('span', { className: 'live-activity-dot' }, [dotIcon]);
+    const titleEl = h('strong', { className: 'live-task-title', text: t('live.currentSession') });
+    const hereTagEl = h('span', {
+      className: 'wm-session-tag is-here',
+      hidden: true,
+      text: t('multi.hereTag'),
+    });
+    const metricsEl = h('span', {
+      className: 'wm-task-metrics text-mono',
+      hidden: true,
+      text: '',
+    });
+    const subToggleBtn = h('button', {
+      type: 'button',
+      className: 'live-sub-toggle',
+      hidden: true,
+      text: t('live.subToggleIdle', { total: 0, arrow: '▸' }),
+    });
+    const elapsedEl = h('span', {
+      className: 'live-activity-elapsed text-mono',
+      text: '0s',
+    });
+
+    const headerEl = h('div', { className: 'live-task-header' }, [
+      h('div', { className: 'live-task-title-wrap' }, [dotWrap, titleEl, hereTagEl]),
+      h('div', { className: 'live-task-header-right' }, [metricsEl, subToggleBtn, elapsedEl]),
+    ]);
+
+    const mainBadge = h('span', {
+      className: 'agent-badge badge-main',
+      hidden: true,
+      text: t('fmt.mainBadge'),
+    });
+    const mainPhase = h('strong', { className: 'live-activity-phase', text: t('live.thinking') });
+    const mainProgress = h('span', {
+      className: 'live-activity-progress text-mono',
+      hidden: true,
+      text: '',
+    });
+    const mainSep = h('span', { className: 'live-activity-sep', hidden: true, text: '·' });
+    const mainDetail = h('span', {
+      className: 'live-activity-detail',
+      hidden: true,
+      text: '',
+    });
+
+    const mainRowEl = h('div', { className: 'live-task-main-row' }, [
+      mainBadge,
+      mainPhase,
+      mainProgress,
+      mainSep,
+      mainDetail,
+    ]);
+
+    const subListEl = h('div', { className: 'live-sub-list', hidden: true });
+    const cardEl = h('div', { className: 'live-task-card' }, [headerEl, mainRowEl, subListEl]);
+
+    return {
+      el: cardEl,
+      refs: {
+        cardEl,
+        dotIcon,
+        titleEl,
+        hereTagEl,
+        metricsEl,
+        subToggleBtn,
+        elapsedEl,
+        mainBadge,
+        mainPhase,
+        mainProgress,
+        mainSep,
+        mainDetail,
+        subListEl,
+      },
+    };
+  }
+
   const multiPinBadge = h('span', {
     className: 'wm-pin-badge',
     hidden: true,
@@ -1390,16 +1869,10 @@ export function mountWindowOverlay() {
       multiEmptyTextEl,
     ]),
   ]);
-  const multiRunningWidget = LiveActivityWidget({
-    defaultExpandRunningSubs: true,
-    showSessionExtras: true,
-    isVisibleFn: () => Boolean(multiOpen && !document.hidden && !disposed),
-    onSelectSession: inspectSessionInMonitor,
-    onLayoutChange: () => {
-      if (multiOpen) {
-        positionFloatingElements();
-      }
-    },
+  const multiRunningListEl = h('div', {
+    className: 'live-activity-list',
+    hidden: true,
+    'aria-live': 'polite',
   });
 
   const multiTitleTextEl = h('span', { text: t('multi.title') });
@@ -1433,10 +1906,10 @@ export function mountWindowOverlay() {
         }
       },
     },
-    [multiHeaderEl, multiEmptyEl, multiRunningWidget.el]
+    [multiHeaderEl, multiEmptyEl, multiRunningListEl]
   );
 
-  // 完整四标签悬浮容器
+  
   uiStore.setState({ monitorVisible: false });
   const appInstance = App();
   const popoverEl = h(
@@ -1450,27 +1923,19 @@ export function mountWindowOverlay() {
     [appInstance.el]
   );
 
-  function syncPortalAppearance(settings) {
-    applyAppearanceToRoot(capsuleHost, settings, { includeFontScale: false });
-    applyAppearanceToRoot(portalHost, settings, { includeFontScale: true });
-    const scaleKey = normalizeClientFontScale(settings?.fontScale);
-    popoverEl.setAttribute?.('data-font-scale', scaleKey);
-    hoverTipEl.setAttribute?.('data-font-scale', scaleKey);
-    multiPanelEl.setAttribute?.('data-font-scale', scaleKey);
-  }
-
   portalShadow.appendChild(multiPanelEl);
   portalShadow.appendChild(hoverTipEl);
   portalShadow.appendChild(popoverEl);
-  syncPortalAppearance(initialSettings);
   (document.body || document.documentElement).appendChild(portalHost);
 
-  // --- 3. 几何测量、IDE 主题桥接、顶栏停靠与防溢出定位 ---
+  // --- 3. IDE ---
   let patchedActionToolbar = null;
   let patchedActionToolbarPrevMargin = '';
   let observedWorkbench = null;
   let themeObserver = null;
   const mirroredThemeVars = new Map();
+  let mirroredHostFont = '';
+  let mirroredHostMonoFont = '';
 
   function restorePatchedActionToolbar() {
     if (!patchedActionToolbar) return;
@@ -1479,7 +1944,7 @@ export function mountWindowOverlay() {
         patchedActionToolbar.style.marginLeft = patchedActionToolbarPrevMargin;
       }
     } catch {
-      // 忽略还原宿主工具栏边距异常
+      
     }
     patchedActionToolbar = null;
     patchedActionToolbarPrevMargin = '';
@@ -1500,6 +1965,34 @@ export function mountWindowOverlay() {
         ? window.getComputedStyle(document.documentElement)
         : null;
       const bodyCs = document.body ? window.getComputedStyle(document.body) : null;
+      const workbenchCs = workbenchEl ? window.getComputedStyle(workbenchEl) : null;
+      const hostFont = String(
+        bodyCs?.fontFamily ||
+          workbenchCs?.fontFamily ||
+          rootCs?.fontFamily ||
+          rootCs?.getPropertyValue?.('--vscode-font-family') ||
+          ''
+      ).trim();
+      if (hostFont && hostFont !== mirroredHostFont) {
+        portalHost.style.setProperty?.('--ag-host-font-family', hostFont);
+        for (const s of getAllCapsuleSurfaces()) {
+          s.capsuleHost.style.setProperty?.('--ag-host-font-family', hostFont);
+        }
+        mirroredHostFont = hostFont;
+      }
+      const hostMonoFont = String(
+        rootCs?.getPropertyValue?.('--vscode-editor-font-family') ||
+          workbenchCs?.getPropertyValue?.('--vscode-editor-font-family') ||
+          bodyCs?.getPropertyValue?.('--font-mono') ||
+          ''
+      ).trim();
+      if (hostMonoFont && hostMonoFont !== mirroredHostMonoFont) {
+        portalHost.style.setProperty?.('--ag-host-font-mono', hostMonoFont);
+        for (const s of getAllCapsuleSurfaces()) {
+          s.capsuleHost.style.setProperty?.('--ag-host-font-mono', hostMonoFont);
+        }
+        mirroredHostMonoFont = hostMonoFont;
+      }
       const nativeRootBg = String(
         rootCs?.getPropertyValue?.('--background') ||
           bodyCs?.getPropertyValue?.('--background') ||
@@ -1509,7 +2002,9 @@ export function mountWindowOverlay() {
         if (mirroredThemeVars.size > 0) {
           for (const k of mirroredThemeVars.keys()) {
             portalHost.style.removeProperty?.(k);
-            capsuleHost.style.removeProperty?.(k);
+            for (const s of getAllCapsuleSurfaces()) {
+              s.capsuleHost.style.removeProperty?.(k);
+            }
           }
           mirroredThemeVars.clear();
         }
@@ -1564,9 +2059,11 @@ export function mountWindowOverlay() {
       for (const [cssVar, val] of nextVars) {
         const prevVal = mirroredThemeVars.get(cssVar) || '';
         if (val) {
-          if (prevVal !== val) {
+          if (prevVal !== val || splitCapsulesMap.size > 0) {
             portalHost.style.setProperty?.(cssVar, val);
-            capsuleHost.style.setProperty?.(cssVar, val);
+            for (const s of getAllCapsuleSurfaces()) {
+              s.capsuleHost.style.setProperty?.(cssVar, val);
+            }
             mirroredThemeVars.set(cssVar, val);
           }
         } else if (prevVal) {
@@ -1575,10 +2072,12 @@ export function mountWindowOverlay() {
           } else {
             portalHost.style.setProperty?.(cssVar, '');
           }
-          if (typeof capsuleHost.style.removeProperty === 'function') {
-            capsuleHost.style.removeProperty(cssVar);
-          } else {
-            capsuleHost.style.setProperty?.(cssVar, '');
+          for (const s of getAllCapsuleSurfaces()) {
+            if (typeof s.capsuleHost.style.removeProperty === 'function') {
+              s.capsuleHost.style.removeProperty(cssVar);
+            } else {
+              s.capsuleHost.style.setProperty?.(cssVar, '');
+            }
           }
           mirroredThemeVars.delete(cssVar);
         }
@@ -1596,7 +2095,7 @@ export function mountWindowOverlay() {
       try {
         themeObserver.observe(wb, { attributes: true, attributeFilter: ['class', 'style'] });
       } catch {
-        // 忽略工作台属性观察异常
+        
       }
     }
   }
@@ -1620,6 +2119,9 @@ export function mountWindowOverlay() {
     }
     if (capsuleHost.style.display === 'none') return false;
     if (!dock.targetContainer?.contains?.(capsuleHost) || curDockAttr !== dock.kind) return false;
+    if ((primarySurface.cascadeId || '') !== (dock.cascadeId || '')) return false;
+    const curTel = telemetryStore.getState().telemetry;
+    const wantPermLeft = Boolean(curTel?.settings?.moveComposerPermissionLeft);
     if (dock.kind === 'composer') {
       if (dock.anchorNode) {
         if (!isImmediatelyBeforeNode(capsuleHost, dock.anchorNode)) return false;
@@ -1631,11 +2133,37 @@ export function mountWindowOverlay() {
               dock.targetContainer.lastChild;
         if (lastEl !== capsuleHost) return false;
       }
+      const expectPermAttr = wantPermLeft && Boolean(dock.permLayout) ? '1' : null;
+      if ((capsuleHost.getAttribute?.('data-composer-perm-left') || null) !== expectPermAttr) {
+        return false;
+      }
+      if (expectPermAttr === '1' && dock.permLayout?.permEl?.getAttribute?.('data-wm-composer-perm') !== '1') {
+        return false;
+      }
+    }
+    const rawMountMode =
+      curTel?.settings?.windowMountMode ??
+      (typeof window !== 'undefined' ? window.__AGUsageMonitorBridge?.mountMode : undefined);
+    const curMountMode = normalizeClientWindowMountMode(
+      rawMountMode,
+      curTel?.settings?.enableWindowOverlay
+    );
+    const secTargets = findSecondarySplitDockTargets(dock, curMountMode, portalHost);
+    if (secTargets.length !== splitCapsulesMap.size) return false;
+    for (const target of secTargets) {
+      const surf = splitCapsulesMap.get(target.keyNode);
+      if (!surf || !surf.capsuleHost?.isConnected) return false;
+      if (!target.targetContainer?.contains?.(surf.capsuleHost)) return false;
+      if ((surf.cascadeId || '') !== (target.cascadeId || '')) return false;
+      if (target.kind === 'composer') {
+        const secExpectPerm = wantPermLeft && Boolean(target.permLayout) ? '1' : null;
+        if ((surf.capsuleHost.getAttribute?.('data-composer-perm-left') || null) !== secExpectPerm) {
+          return false;
+        }
+      }
     }
     return true;
   }
-
-  const isMac = () => isMacHostPlatform(telemetryStore.getState().telemetry);
 
   function updateFixedFallbackPosition() {
     const dockMode = capsuleHost.getAttribute('data-dock');
@@ -1646,36 +2174,54 @@ export function mountWindowOverlay() {
     }
     try {
       const vw = Number(window.innerWidth || 1280);
-      const minRight = isMac() ? 12 : 144;
-      let rightOffset = minRight;
+      let rightOffset = 144;
       const anchor = findNativeTopRightAnchor();
       if (anchor?.getBoundingClientRect) {
         const r = anchor.getBoundingClientRect();
         if (r.width > 0 && r.left > 0 && r.left < vw) {
-          rightOffset = Math.max(minRight, Math.ceil(vw - r.left + 6));
+          rightOffset = Math.max(144, Math.ceil(vw - r.left + 6));
         }
       }
       capsuleHost.style.top = '7px';
       capsuleHost.style.right = `${rightOffset}px`;
     } catch {
-      // 忽略回退坐标计算异常
+      
     }
   }
 
-  function syncCapsuleOsAttr() {
-    const nextOs = isMac() ? 'mac' : 'default';
-    if (capsuleHost.getAttribute('data-os') !== nextOs) {
-      patchAttr(capsuleHost, 'data-os', nextOs);
-      if (capsuleHost.getAttribute('data-dock') === 'fixed') {
-        updateFixedFallbackPosition();
-      }
-    }
-  }
-
-  function measureAvailableTitlebarWidth(dockTarget) {
+  function measureAvailableTitlebarWidth(dockTarget, hostNode = capsuleHost) {
     try {
       const titlebar = dockTarget?.titlebar || null;
       if (dockTarget?.kind === 'composer' && titlebar?.getBoundingClientRect) {
+        const movePermLeft = Boolean(telemetryStore.getState().telemetry?.settings?.moveComposerPermissionLeft);
+        if (movePermLeft && dockTarget.permLayout?.rowEl?.getBoundingClientRect) {
+          const pl = dockTarget.permLayout;
+          const rowRect = pl.rowEl.getBoundingClientRect();
+          if (rowRect.width > 0) {
+            let leftUsed = 0;
+            for (const ln of pl.leftNodes || []) {
+              const lr = ln?.getBoundingClientRect?.();
+              if (!lr) continue;
+              // flex-1 wrapper spans unused empty space before CSS reorder applies; sum its visible children instead
+              if (ln.children?.length > 0 && pl.kind === 'nested-right') {
+                let childSum = 0;
+                for (const ch of ln.children) {
+                  const cr = ch?.getBoundingClientRect?.();
+                  if (cr && cr.width > 0) childSum += cr.width;
+                }
+                leftUsed += childSum > 0 ? childSum : lr.width;
+              } else {
+                leftUsed += Math.max(0, lr.width);
+              }
+            }
+            const permW = Math.max(0, pl.permEl?.getBoundingClientRect?.()?.width || 0);
+            let actionsW = 0;
+            for (const act of pl.actionEls || []) {
+              actionsW += Math.max(0, act?.getBoundingClientRect?.()?.width || 0);
+            }
+            return rowRect.width - leftUsed - permW - actionsW - 24;
+          }
+        }
         const cRect = titlebar.getBoundingClientRect();
         const aRect = dockTarget.anchorNode?.getBoundingClientRect?.();
         if (cRect.width > 0) {
@@ -1733,7 +2279,7 @@ export function mountWindowOverlay() {
           const rightGroup = dockTarget.targetContainer;
           if (rightGroup?.children) {
             for (const child of rightGroup.children) {
-              if (child === capsuleHost || !child?.getBoundingClientRect) continue;
+              if (child === hostNode || isAnyOverlayHostNode(child) || !child?.getBoundingClientRect) continue;
               const cw = Math.max(0, child.getBoundingClientRect().width);
               rightSiblingsWidth += cw;
               if (cw > 0 && child.classList?.contains?.('window-controls-container')) {
@@ -1741,19 +2287,10 @@ export function mountWindowOverlay() {
               }
             }
           }
-          if (navigator?.windowControlsOverlay?.visible) {
+          if (!hasVisibleWindowControls && navigator?.windowControlsOverlay?.visible) {
             const wcoRect = navigator.windowControlsOverlay.getTitlebarAreaRect?.();
-            if (wcoRect && wcoRect.width > 0) {
-              if (!hasVisibleWindowControls && tbRect.right > wcoRect.right + 4) {
-                rightSiblingsWidth += tbRect.right - wcoRect.right;
-              }
-              const leftOverlayInset = wcoRect.left - tbRect.left;
-              if (leftOverlayInset > leftContentWidth) {
-                leftContentWidth = Math.min(
-                  Math.round(tbRect.width * 0.45),
-                  Math.ceil(leftOverlayInset)
-                );
-              }
+            if (wcoRect && wcoRect.width > 0 && tbRect.right > wcoRect.right + 4) {
+              rightSiblingsWidth += tbRect.right - wcoRect.right;
             }
           }
 
@@ -1766,16 +2303,15 @@ export function mountWindowOverlay() {
         if (tbRect.width > 0) {
           const titleEl = titlebar.firstElementChild;
           const titleInner = titleEl?.firstElementChild;
-          const macTrafficReserve = isMac() ? 80 : 168;
           const contentStart = titleInner?.getBoundingClientRect
             ? Math.max(8, titleInner.getBoundingClientRect().left - tbRect.left)
-            : tbRect.left < macTrafficReserve
-              ? macTrafficReserve - tbRect.left
+            : tbRect.left < 168
+              ? 168 - tbRect.left
               : 12;
           const minTitleWidth = 180;
           let siblingButtonsWidth = 64;
           let rightPad = 8;
-          const rightGroup = capsuleHost.parentElement;
+          const rightGroup = hostNode.parentElement;
           if (rightGroup && rightGroup !== titlebar) {
             const auxOpen =
               typeof document.querySelector === 'function' &&
@@ -1796,7 +2332,7 @@ export function mountWindowOverlay() {
             if (rightGroup.children) {
               let sum = 0;
               for (const child of rightGroup.children) {
-                if (child !== capsuleHost && child.getBoundingClientRect) {
+                if (child !== hostNode && !isAnyOverlayHostNode(child) && child.getBoundingClientRect) {
                   sum += child.getBoundingClientRect().width;
                 }
               }
@@ -1810,35 +2346,31 @@ export function mountWindowOverlay() {
         return window.innerWidth - 360;
       }
     } catch {
-      // 忽略测量异常
+      
     }
     return 320;
   }
 
   function positionFloatingElements() {
-    if (disposed || !capsuleBtn.getBoundingClientRect) return;
+    const surf = getActiveAnchorSurface();
+    const anchorBtn = surf?.capsuleBtn || capsuleBtn;
+    const anchorMulti = surf?.multiBtn || multiBtn;
+    const anchorHost = surf?.capsuleHost || capsuleHost;
+    const anchorUpd = surf?.topbarUpdateBtn || topbarUpdateBtn;
+    if (disposed || !anchorBtn.getBoundingClientRect) return;
     try {
-      const bRect = capsuleBtn.getBoundingClientRect();
+      const bRect = anchorBtn.getBoundingClientRect();
       if (bRect.width === 0 && bRect.height === 0) return;
       const vw = Number(window.innerWidth || 1280);
       const vh = Number(window.innerHeight || 800);
       const navRight = getLeftSidebarRightEdge(vw);
       const minLeft = navRight > 0 ? Math.max(12, navRight + 12) : 12;
-      const curSettings = telemetryStore.getState().telemetry?.settings;
-      const panelScale =
-        PANEL_SCALE_FACTORS[normalizeClientFontScale(curSettings?.fontScale)] ?? 1;
-      const defaultCardW = Math.min(
-        Math.round(FLOATING_CARD_WIDTH * panelScale),
-        Math.max(280, vw - 24)
-      );
-      const defaultMultiW = Math.min(
-        Math.round(MULTI_PANEL_WIDTH * panelScale),
-        Math.max(280, vw - 24)
-      );
-      const isDockComposer = capsuleHost.getAttribute('data-dock') === 'composer';
+      const defaultCardW = Math.min(FLOATING_CARD_WIDTH, Math.max(280, vw - 24));
+      const defaultMultiW = Math.min(MULTI_PANEL_WIDTH, Math.max(280, vw - 24));
+      const isDockComposer = anchorHost.getAttribute('data-dock') === 'composer';
 
       if (multiOpen) {
-        const mRect = multiBtn.getBoundingClientRect?.() || bRect;
+        const mRect = anchorMulti.getBoundingClientRect?.() || bRect;
         const anchorRect = mRect.width > 0 || mRect.height > 0 ? mRect : bRect;
         const rawW =
           Number(multiPanelEl.offsetWidth) ||
@@ -1876,14 +2408,15 @@ export function mountWindowOverlay() {
       }
 
       const rightAnchorEdge =
-        !topbarUpdateBtn.hasAttribute('hidden') && topbarUpdateBtn.getBoundingClientRect
-          ? Math.max(bRect.right, topbarUpdateBtn.getBoundingClientRect().right || 0)
+        !anchorUpd.hasAttribute('hidden') && anchorUpd.getBoundingClientRect
+          ? Math.max(bRect.right, anchorUpd.getBoundingClientRect().right || 0)
           : bRect.right;
 
       if (popoverOpen) {
         const maxPopCardW = Math.max(280, vw - minLeft - 12);
+        const curSettings = telemetryStore.getState().telemetry?.settings;
         const popWidthMode = normalizeClientPopoverWidthMode(curSettings?.popoverWidthMode);
-        let desiredPopW = Math.min(Math.round(POPOVER_BASE_WIDTH * panelScale), maxPopCardW);
+        let desiredPopW = Math.min(POPOVER_BASE_WIDTH, maxPopCardW);
         if (popWidthMode === 'custom') {
           desiredPopW = Math.min(
             normalizeClientPopoverWidth(curSettings?.popoverWidth),
@@ -2007,14 +2540,19 @@ export function mountWindowOverlay() {
         hoverTipEl.style.left = `${left}px`;
       }
     } catch {
-      // 忽略定位异常
+      
     }
   }
 
-  function updateResponsiveLayout(dockOverride = undefined) {
-    if (disposed) return;
-    const dockTarget = dockOverride === undefined ? resolveRuntimeDockTarget() : dockOverride;
-    const avail = measureAvailableTitlebarWidth(dockTarget);
+  function updateSurfaceResponsiveLayout(surface, dockTargetOverride = undefined) {
+    if (disposed || !surface) return;
+    const dockTarget =
+      dockTargetOverride !== undefined
+        ? dockTargetOverride
+        : surface.isPrimary
+          ? resolveRuntimeDockTarget()
+          : surface.dockTarget;
+    const avail = measureAvailableTitlebarWidth(dockTarget, surface.capsuleHost);
     const curTel = telemetryStore.getState().telemetry;
     const showMulti = curTel?.settings?.showTopbarMultiSession !== false;
     const curUpdateMode = normalizeClientUpdateMode(
@@ -2023,14 +2561,25 @@ export function mountWindowOverlay() {
     );
     const hasUpdate = Boolean(curTel?.cloudStatus?.updateAvailable) && curUpdateMode !== 'off';
     const slotCount = normalizeClientTopbarSlots(curTel?.settings?.topbarCapsuleSlots).length;
-    const nextMode = computeCapsuleLayoutMode(avail, layoutMode, {
+    const nextMode = computeCapsuleLayoutMode(avail, surface.layoutMode || 'wide', {
       showMulti,
       hasUpdate,
       slotCount,
     });
-    if (nextMode !== layoutMode) {
-      layoutMode = nextMode;
-      capsuleHost.setAttribute('data-layout', layoutMode);
+    if (nextMode !== surface.layoutMode) {
+      surface.layoutMode = nextMode;
+      surface.capsuleHost.setAttribute('data-layout', nextMode);
+      if (surface.isPrimary) {
+        layoutMode = nextMode;
+      }
+    }
+  }
+
+  function updateResponsiveLayout(dockOverride = undefined) {
+    if (disposed) return;
+    updateSurfaceResponsiveLayout(primarySurface, dockOverride);
+    for (const splitSurf of splitCapsulesMap.values()) {
+      updateSurfaceResponsiveLayout(splitSurf, splitSurf.dockTarget);
     }
     if (capsuleHost.getAttribute('data-dock') === 'fixed') {
       updateFixedFallbackPosition();
@@ -2042,103 +2591,297 @@ export function mountWindowOverlay() {
 
   let resizeObserver = null;
 
+  function restoreSurfaceActionToolbar(surface) {
+    if (!surface?.patchedActionToolbar) return;
+    try {
+      if (surface.patchedActionToolbar.style) {
+        surface.patchedActionToolbar.style.marginLeft = surface.patchedActionToolbarPrevMargin || '';
+      }
+    } catch {
+      
+    }
+    surface.patchedActionToolbar = null;
+    surface.patchedActionToolbarPrevMargin = '';
+  }
+
+  function clearSurfaceComposerPermLayout(surface) {
+    const prev = surface?.appliedComposerPermLayout;
+    if (!prev) return;
+    const others = getAllCapsuleSurfaces().filter((s) => s && s !== surface && s.appliedComposerPermLayout);
+    const isOwnedByOther = (key, node) =>
+      Boolean(
+        node &&
+          others.some((s) => {
+            const p = s.appliedComposerPermLayout;
+            if (!p) return false;
+            if (Array.isArray(p[key])) return p[key].includes(node);
+            return p[key] === node;
+          })
+      );
+    try {
+      if (!isOwnedByOther('rowEl', prev.rowEl)) {
+        prev.rowEl?.removeAttribute?.('data-wm-composer-row');
+      }
+      for (const ln of prev.leftNodes || []) {
+        if (!isOwnedByOther('leftNodes', ln)) {
+          ln?.removeAttribute?.('data-wm-composer-left');
+        }
+      }
+      if (!isOwnedByOther('rightEl', prev.rightEl)) {
+        prev.rightEl?.removeAttribute?.('data-wm-composer-right');
+      }
+      if (!isOwnedByOther('permEl', prev.permEl)) {
+        prev.permEl?.removeAttribute?.('data-wm-composer-perm');
+      }
+      for (const act of prev.actionEls || []) {
+        if (!isOwnedByOther('actionEls', act)) {
+          act?.removeAttribute?.('data-wm-composer-actions');
+        }
+      }
+    } catch {
+      // ignore attribute cleanup error
+    }
+    surface.appliedComposerPermLayout = null;
+  }
+
+  function syncSurfaceComposerPermLayout(surface, permLayout, enabled) {
+    if (!enabled || !permLayout) {
+      clearSurfaceComposerPermLayout(surface);
+      patchAttr(surface.capsuleHost, 'data-composer-perm-left', null);
+      return false;
+    }
+    const prev = surface.appliedComposerPermLayout;
+    const sameNodes =
+      prev &&
+      prev.rowEl === permLayout.rowEl &&
+      prev.rightEl === permLayout.rightEl &&
+      prev.permEl === permLayout.permEl;
+    if (!sameNodes) {
+      clearSurfaceComposerPermLayout(surface);
+    }
+    syncComposerLayoutStyleElement(true);
+    try {
+      permLayout.rowEl?.setAttribute?.('data-wm-composer-row', '1');
+      for (const ln of permLayout.leftNodes || []) {
+        ln?.setAttribute?.('data-wm-composer-left', '1');
+      }
+      permLayout.rightEl?.setAttribute?.('data-wm-composer-right', '1');
+      permLayout.permEl?.setAttribute?.('data-wm-composer-perm', '1');
+      for (const act of permLayout.actionEls || []) {
+        act?.setAttribute?.('data-wm-composer-actions', '1');
+      }
+      surface.appliedComposerPermLayout = permLayout;
+      patchAttr(surface.capsuleHost, 'data-composer-perm-left', '1');
+      return true;
+    } catch {
+      clearSurfaceComposerPermLayout(surface);
+      patchAttr(surface.capsuleHost, 'data-composer-perm-left', null);
+      return false;
+    }
+  }
+
+  function refreshComposerLayoutStyleGlobalState() {
+    const anyActive = getAllCapsuleSurfaces().some((s) => Boolean(s?.appliedComposerPermLayout));
+    syncComposerLayoutStyleElement(anyActive);
+  }
+
+  function disposeSecondarySplitSurface(keyNode, surface) {
+    cancelCapsuleSlotAnimations(surface?.capsuleSlots);
+    restoreSurfaceActionToolbar(surface);
+    clearSurfaceComposerPermLayout(surface);
+    if (activeAnchorSurface === surface) {
+      activeAnchorSurface = primarySurface;
+      if (tooltipOpen) {
+        setTooltipOpen(false);
+      } else if (popoverOpen) {
+        positionFloatingElements();
+      }
+    }
+    try {
+      surface.capsuleHost?.remove?.();
+    } catch {
+      // ignore remove error
+    }
+    if (keyNode !== undefined) {
+      splitCapsulesMap.delete(keyNode);
+    }
+    refreshComposerLayoutStyleGlobalState();
+  }
+
+  function dockCapsuleSurfaceIntoTarget(surface, dockTarget) {
+    const hostEl = surface.capsuleHost;
+    if (hostEl.style.display === 'none') {
+      hostEl.style.display = '';
+    }
+    surface.dockTarget = dockTarget;
+    surface.cascadeId = String(dockTarget.cascadeId || '');
+    const { kind, titlebar, targetContainer, actionToolbar } = dockTarget;
+    const wantPermLeft = Boolean(
+      telemetryStore.getState().telemetry?.settings?.moveComposerPermissionLeft
+    );
+    if (kind === 'composer') {
+      if (surface.patchedActionToolbar !== actionToolbar) {
+        restoreSurfaceActionToolbar(surface);
+        if (actionToolbar?.style) {
+          surface.patchedActionToolbar = actionToolbar;
+          surface.patchedActionToolbarPrevMargin = actionToolbar.style.marginLeft || '';
+          actionToolbar.style.marginLeft = '0px';
+        }
+      }
+      if (dockTarget.anchorNode) {
+        if (
+          (hostEl.parentElement || hostEl.parentNode) !== targetContainer ||
+          !isImmediatelyBeforeNode(hostEl, dockTarget.anchorNode)
+        ) {
+          targetContainer.insertBefore(hostEl, dockTarget.anchorNode);
+        }
+      } else {
+        const lastEl =
+          targetContainer.lastElementChild !== undefined
+            ? targetContainer.lastElementChild
+            : targetContainer.children?.[targetContainer.children.length - 1] ||
+              targetContainer.lastChild;
+        if (
+          (hostEl.parentElement || hostEl.parentNode) !== targetContainer ||
+          lastEl !== hostEl
+        ) {
+          targetContainer.appendChild(hostEl);
+        }
+      }
+      patchAttr(hostEl, 'data-dock', 'composer');
+      patchAttr(
+        hostEl,
+        'data-composer-push',
+        dockTarget.needsAutoMarginTransfer ? '1' : null
+      );
+      syncSurfaceComposerPermLayout(surface, dockTarget.permLayout, wantPermLeft);
+    } else if (kind === 'ide-titlebar') {
+      clearSurfaceComposerPermLayout(surface);
+      patchAttr(hostEl, 'data-composer-perm-left', null);
+      if (surface.patchedActionToolbar !== actionToolbar) {
+        restoreSurfaceActionToolbar(surface);
+        if (actionToolbar?.style) {
+          surface.patchedActionToolbar = actionToolbar;
+          surface.patchedActionToolbarPrevMargin = actionToolbar.style.marginLeft || '';
+          actionToolbar.style.marginLeft = '0px';
+        }
+      }
+      if (hostEl.parentElement !== targetContainer || targetContainer.firstChild !== hostEl) {
+        if (targetContainer.firstChild) {
+          targetContainer.insertBefore(hostEl, targetContainer.firstChild);
+        } else {
+          targetContainer.appendChild(hostEl);
+        }
+      }
+      patchAttr(hostEl, 'data-dock', 'ide-titlebar');
+      patchAttr(hostEl, 'data-composer-push', null);
+    } else {
+      clearSurfaceComposerPermLayout(surface);
+      patchAttr(hostEl, 'data-composer-perm-left', null);
+      restoreSurfaceActionToolbar(surface);
+      if (hostEl.parentElement !== targetContainer) {
+        if (targetContainer.firstChild && targetContainer !== titlebar) {
+          targetContainer.insertBefore(hostEl, targetContainer.firstChild);
+        } else {
+          targetContainer.appendChild(hostEl);
+        }
+      }
+      patchAttr(hostEl, 'data-dock', 'flow');
+      patchAttr(hostEl, 'data-composer-push', null);
+    }
+    if (hostEl.style.top) hostEl.style.top = '';
+    if (hostEl.style.right) hostEl.style.right = '';
+  }
+
+  function syncSecondarySplitCapsules(primaryDock) {
+    const curSettings = telemetryStore.getState().telemetry?.settings;
+    const rawMountMode =
+      curSettings?.windowMountMode ??
+      (typeof window !== 'undefined' ? window.__AGUsageMonitorBridge?.mountMode : undefined);
+    const curMountMode = normalizeClientWindowMountMode(
+      rawMountMode,
+      curSettings?.enableWindowOverlay
+    );
+    const secondaryTargets = findSecondarySplitDockTargets(primaryDock, curMountMode, portalHost);
+    const nextKeys = new Set(secondaryTargets.map((t) => t.keyNode));
+
+    for (const [keyNode, surf] of [...splitCapsulesMap.entries()]) {
+      if (!nextKeys.has(keyNode) || !keyNode?.isConnected) {
+        disposeSecondarySplitSurface(keyNode, surf);
+      }
+    }
+
+    let splitNeedsRender = false;
+    for (const target of secondaryTargets) {
+      let surf = splitCapsulesMap.get(target.keyNode);
+      if (!surf) {
+        splitNeedsRender = true;
+        surf = createCapsuleSurfaceInstance({ isPrimary: false });
+        if (mirroredHostFont) {
+          surf.capsuleHost.style.setProperty?.('--ag-host-font-family', mirroredHostFont);
+        }
+        if (mirroredHostMonoFont) {
+          surf.capsuleHost.style.setProperty?.('--ag-host-font-mono', mirroredHostMonoFont);
+        }
+        for (const [cssVar, val] of mirroredThemeVars.entries()) {
+          surf.capsuleHost.style.setProperty?.(cssVar, val);
+        }
+        splitCapsulesMap.set(target.keyNode, surf);
+      } else if ((surf.cascadeId || '') !== String(target.cascadeId || '')) {
+        splitNeedsRender = true;
+      }
+      dockCapsuleSurfaceIntoTarget(surf, target);
+      if (resizeObserver && target.titlebar) {
+        try {
+          resizeObserver.observe(target.titlebar);
+        } catch {
+          // ignore resize observe errors
+        }
+      }
+    }
+    if (splitNeedsRender && telemetryStore.getState().telemetry) {
+      renderCapsuleTelemetry();
+    }
+  }
+
   function ensureCapsuleDocked() {
     if (disposed) return false;
     const bodyOrDoc = document.body || document.documentElement;
     if (bodyOrDoc && !portalHost.isConnected) {
       bodyOrDoc.appendChild(portalHost);
     }
-    syncCapsuleOsAttr();
     ensureWorkbenchThemeObserved();
 
     const dockTarget = resolveRuntimeDockTarget();
     if (dockTarget) {
-      if (capsuleHost.style.display === 'none') {
-        capsuleHost.style.display = '';
-      }
-      const { kind, titlebar, targetContainer, actionToolbar } = dockTarget;
-      if (kind === 'composer') {
-        if (patchedActionToolbar !== actionToolbar) {
-          restorePatchedActionToolbar();
-          if (actionToolbar?.style) {
-            patchedActionToolbar = actionToolbar;
-            patchedActionToolbarPrevMargin = actionToolbar.style.marginLeft || '';
-            actionToolbar.style.marginLeft = '0px';
-          }
-        }
-        if (dockTarget.anchorNode) {
-          if (
-            (capsuleHost.parentElement || capsuleHost.parentNode) !== targetContainer ||
-            !isImmediatelyBeforeNode(capsuleHost, dockTarget.anchorNode)
-          ) {
-            targetContainer.insertBefore(capsuleHost, dockTarget.anchorNode);
-          }
-        } else {
-          const lastEl =
-            targetContainer.lastElementChild !== undefined
-              ? targetContainer.lastElementChild
-              : targetContainer.children?.[targetContainer.children.length - 1] ||
-                targetContainer.lastChild;
-          if (
-            (capsuleHost.parentElement || capsuleHost.parentNode) !== targetContainer ||
-            lastEl !== capsuleHost
-          ) {
-            targetContainer.appendChild(capsuleHost);
-          }
-        }
-        patchAttr(capsuleHost, 'data-dock', 'composer');
-        patchAttr(
-          capsuleHost,
-          'data-composer-push',
-          dockTarget.needsAutoMarginTransfer ? '1' : null
-        );
-      } else if (kind === 'ide-titlebar') {
-        if (patchedActionToolbar !== actionToolbar) {
-          restorePatchedActionToolbar();
-          if (actionToolbar?.style) {
-            patchedActionToolbar = actionToolbar;
-            patchedActionToolbarPrevMargin = actionToolbar.style.marginLeft || '';
-            actionToolbar.style.marginLeft = '0px';
-          }
-        }
-        if (capsuleHost.parentElement !== targetContainer || targetContainer.firstChild !== capsuleHost) {
-          if (targetContainer.firstChild) {
-            targetContainer.insertBefore(capsuleHost, targetContainer.firstChild);
-          } else {
-            targetContainer.appendChild(capsuleHost);
-          }
-        }
-        patchAttr(capsuleHost, 'data-dock', 'ide-titlebar');
-        patchAttr(capsuleHost, 'data-composer-push', null);
-      } else {
-        restorePatchedActionToolbar();
-        if (capsuleHost.parentElement !== targetContainer) {
-          if (targetContainer.firstChild && targetContainer !== titlebar) {
-            targetContainer.insertBefore(capsuleHost, targetContainer.firstChild);
-          } else {
-            targetContainer.appendChild(capsuleHost);
-          }
-        }
-        patchAttr(capsuleHost, 'data-dock', 'flow');
-        patchAttr(capsuleHost, 'data-composer-push', null);
-      }
-      if (capsuleHost.style.top) capsuleHost.style.top = '';
-      if (capsuleHost.style.right) capsuleHost.style.right = '';
+      dockCapsuleSurfaceIntoTarget(primarySurface, dockTarget);
+      patchedActionToolbar = primarySurface.patchedActionToolbar;
+      patchedActionToolbarPrevMargin = primarySurface.patchedActionToolbarPrevMargin;
 
-      if (observedTitlebar !== titlebar) {
-        observedTitlebar = titlebar;
+      if (observedTitlebar !== dockTarget.titlebar) {
+        observedTitlebar = dockTarget.titlebar;
         try {
           if (resizeObserver) {
             resizeObserver.disconnect();
-            resizeObserver.observe(titlebar);
+            if (dockTarget.titlebar) resizeObserver.observe(dockTarget.titlebar);
             if (document.body) resizeObserver.observe(document.body);
           }
         } catch {
-          // 忽略观察器异常
+          
         }
       }
+      syncSecondarySplitCapsules(dockTarget);
+      refreshComposerLayoutStyleGlobalState();
     } else if (isIdeExtensionChatFrame()) {
+      for (const [keyNode, surf] of [...splitCapsulesMap.entries()]) {
+        disposeSecondarySplitSurface(keyNode, surf);
+      }
       restorePatchedActionToolbar();
+      clearSurfaceComposerPermLayout(primarySurface);
+      patchAttr(capsuleHost, 'data-composer-perm-left', null);
+      refreshComposerLayoutStyleGlobalState();
+      primarySurface.patchedActionToolbar = null;
+      primarySurface.patchedActionToolbarPrevMargin = '';
       if (popoverOpen) setPopoverOpen(false);
       if (multiOpen) setMultiOpen(false);
       if (tooltipOpen) setTooltipOpen(false);
@@ -2149,10 +2892,18 @@ export function mountWindowOverlay() {
       patchAttr(capsuleHost, 'data-dock', 'pending-composer');
       patchAttr(capsuleHost, 'data-composer-push', null);
     } else if (bodyOrDoc) {
+      for (const [keyNode, surf] of [...splitCapsulesMap.entries()]) {
+        disposeSecondarySplitSurface(keyNode, surf);
+      }
       if (capsuleHost.style.display === 'none') {
         capsuleHost.style.display = '';
       }
       restorePatchedActionToolbar();
+      clearSurfaceComposerPermLayout(primarySurface);
+      patchAttr(capsuleHost, 'data-composer-perm-left', null);
+      refreshComposerLayoutStyleGlobalState();
+      primarySurface.patchedActionToolbar = null;
+      primarySurface.patchedActionToolbarPrevMargin = '';
       if (capsuleHost.parentElement !== bodyOrDoc) {
         bodyOrDoc.appendChild(capsuleHost);
       }
@@ -2217,13 +2968,12 @@ export function mountWindowOverlay() {
     patchAttr(multiPanelEl, 'hidden', !multiOpen);
     if (multiOpen) {
       renderCapsuleTelemetry();
-      multiRunningWidget.refs.resumeTicker();
       positionFloatingElements();
       if (typeof requestAnimationFrame === 'function') {
         requestAnimationFrame(() => positionFloatingElements());
       }
     } else {
-      multiRunningWidget.refs.pauseTicker();
+      pauseMultiLiveTicker();
     }
   }
 
@@ -2298,10 +3048,18 @@ export function mountWindowOverlay() {
   }
 
   function renderMultiRunningPanel(rawRunningList, runningCount, runningSubCount, hostRouteConversationId) {
-    if (!multiOpen || document.hidden) {
-      multiRunningWidget.refs.pauseTicker();
-      return;
+    if (manualSubExpandMap.size > 0) {
+      const runningIds = new Set(rawRunningList.map((item) => item.cascadeId));
+      for (const id of manualSubExpandMap.keys()) {
+        if (!runningIds.has(id)) manualSubExpandMap.delete(id);
+      }
     }
+    if (!multiOpen || document.hidden) return;
+    const localeKey = getEffectiveLocale();
+    const hostRouteLower = String(
+      hostRouteConversationId || extractHostRouteCascadeId() || ''
+    ).toLowerCase();
+
     patchText(
       multiRunningMetaEl,
       runningCount > 0
@@ -2311,22 +3069,348 @@ export function mountWindowOverlay() {
         : t('multi.allIdle')
     );
     patchAttr(multiEmptyEl, 'hidden', runningCount > 0);
-    multiRunningWidget.refs.update({
-      items: rawRunningList,
-      hostRouteConversationId,
-    });
+    patchAttr(multiRunningListEl, 'hidden', runningCount === 0);
+
+    if (runningCount === 0) {
+      stopMultiLiveTicker();
+      patchKeyedList(multiRunningListEl, [], {});
+    } else {
+      const activeTimerKeys = new Set();
+      for (const item of rawRunningList) {
+        activeTimerKeys.add(`main:${item.cascadeId}`);
+        const subCount = Number(item.subagentCount || item.subagents?.length || 0);
+        const runSubs = Number(item.runningSubagentCount || 0);
+        const isExp = manualSubExpandMap.has(item.cascadeId)
+          ? manualSubExpandMap.get(item.cascadeId)
+          : runSubs > 0;
+        if (subCount > 0 && isExp) {
+          for (const sub of item.subagents || []) {
+            if (sub?.isRunning) {
+              activeTimerKeys.add(`sub:${sub.cascadeId}`);
+            }
+          }
+        }
+      }
+
+      patchKeyedList(multiRunningListEl, rawRunningList, {
+        keyFn: (item) => item.cascadeId,
+        sigFn: (item) => {
+          const runSubs = Number(item.runningSubagentCount || 0);
+          const isExp = manualSubExpandMap.has(item.cascadeId)
+            ? manualSubExpandMap.get(item.cascadeId)
+            : runSubs > 0;
+          const isHere =
+            Boolean(hostRouteLower) &&
+            String(item.cascadeId || '').toLowerCase() === hostRouteLower;
+          const subSig = (item.subagents || [])
+            .map(
+              (s) =>
+                `${s.cascadeId}:${s.isRunning}:${s.stepCount}:${s.liveActivity?.signature || ''}:${s.liveActivity?.startedAtMs || 0}`
+            )
+            .join('|');
+          return `${localeKey}:${item.cascadeId}:${item.title}:${isHere}:${item.isMainRunning}:${item.subagentCount}:${runSubs}:${isExp}:${item.latestTokPerSec ?? ''}:${item.contextUsedPct ?? ''}:${item.mainActivity?.signature || ''}:${item.mainActivity?.startedAtMs || 0}:${subSig}`;
+        },
+        createRow: createMultiLiveTaskCard,
+        updateRow: (refs, item) => {
+          const act = item.mainActivity || {
+            phase: 'thinking',
+            label: t('live.thinking'),
+            detail: '',
+            stepProgress: '',
+            startedAtMs: item.lastModifiedMs || 0,
+            signature: `fallback:${item.lastModifiedMs || 0}`,
+          };
+          const isWaiting = act.phase === 'waiting';
+          const isCompacting = act.phase === 'compacting';
+          patchClasses(refs.cardEl, {
+            'is-waiting': isWaiting,
+            'is-compacting': isCompacting,
+          });
+          patchClasses(refs.dotIcon, { 'is-pulsing': true });
+
+          const convTitle =
+            item.title || item.cascadeId?.slice(0, 8) || t('live.currentSession');
+          patchText(refs.titleEl, convTitle);
+          patchAttr(refs.titleEl, 'title', t('multi.inspectSessionTitle', { title: convTitle }));
+          refs.titleEl.onclick = (e) => {
+            e.stopPropagation();
+            inspectSessionInMonitor(item.cascadeId);
+          };
+
+          const isHere =
+            Boolean(hostRouteLower) &&
+            String(item.cascadeId || '').toLowerCase() === hostRouteLower;
+          patchText(refs.hereTagEl, t('multi.hereTag'));
+          patchAttr(refs.hereTagEl, 'hidden', !isHere);
+
+          const metricParts = [];
+          if (Number.isFinite(item.latestTokPerSec) && item.latestTokPerSec > 0) {
+            metricParts.push(
+              `${item.latestTokPerSec >= 100 ? Math.round(item.latestTokPerSec) : item.latestTokPerSec.toFixed(1)} t/s`
+            );
+          }
+          if (item.contextUsedPct != null && Number.isFinite(Number(item.contextUsedPct))) {
+            metricParts.push(`${Math.round(Number(item.contextUsedPct))}%`);
+          }
+          const metricsStr = metricParts.join(' · ');
+          patchAttr(refs.metricsEl, 'hidden', !metricsStr);
+          if (metricsStr) {
+            patchText(refs.metricsEl, metricsStr);
+          }
+
+          const subCount = Number(item.subagentCount || item.subagents?.length || 0);
+          const runSubCount = Number(item.runningSubagentCount || 0);
+          const isExpanded = manualSubExpandMap.has(item.cascadeId)
+            ? manualSubExpandMap.get(item.cascadeId)
+            : runSubCount > 0;
+          patchText(refs.mainBadge, t('fmt.mainBadge'));
+          patchAttr(refs.mainBadge, 'hidden', subCount === 0);
+          patchAttr(refs.subToggleBtn, 'hidden', subCount === 0);
+          if (subCount > 0) {
+            const arrow = isExpanded ? '▾' : '▸';
+            const toggleText =
+              runSubCount > 0
+                ? t('live.subToggleRunning', { run: runSubCount, total: subCount, arrow })
+                : t('live.subToggleIdle', { total: subCount, arrow });
+            patchText(refs.subToggleBtn, toggleText);
+            patchClasses(refs.subToggleBtn, { 'is-expanded': isExpanded });
+            refs.subToggleBtn.onclick = (e) => {
+              e.stopPropagation();
+              manualSubExpandMap.set(item.cascadeId, !isExpanded);
+              renderCapsuleTelemetry();
+              if (multiOpen) {
+                positionFloatingElements();
+              }
+            };
+          }
+
+          const mainTimerKey = `main:${item.cascadeId}`;
+          activeTimerKeys.add(mainTimerKey);
+          bindMultiElapsedTimer(
+            mainTimerKey,
+            `${item.cascadeId}:${act.signature || act.label}`,
+            act.startedAtMs,
+            refs.elapsedEl
+          );
+
+          patchText(refs.mainPhase, translateLiveActivityText(act.label) || t('live.thinking'));
+          const progText = act.stepProgress ? `[${act.stepProgress}]` : '';
+          patchAttr(refs.mainProgress, 'hidden', !progText);
+          if (progText) {
+            patchText(refs.mainProgress, progText);
+          }
+
+          const detailStr = translateLiveActivityText(act.detail || '');
+          patchAttr(refs.mainSep, 'hidden', !detailStr);
+          patchAttr(refs.mainDetail, 'hidden', !detailStr);
+          patchText(refs.mainDetail, detailStr);
+
+          const showSubs = subCount > 0 && isExpanded;
+          patchAttr(refs.subListEl, 'hidden', !showSubs);
+          if (showSubs) {
+            const subItems = item.subagents || [];
+            patchKeyedList(refs.subListEl, subItems, {
+              keyFn: (sub) => sub.cascadeId,
+              sigFn: (sub) =>
+                `${localeKey}:${sub.cascadeId}:${sub.role}:${sub.isRunning}:${sub.stepCount}:${sub.liveActivity?.signature || ''}:${sub.isRunning ? multiTimersMap.has(`sub:${sub.cascadeId}`) : true}`,
+              createRow: createMultiLiveSubRow,
+              updateRow: (subRefs, sub) => {
+                const subAct = sub.liveActivity || {
+                  phase: sub.isRunning ? 'thinking' : 'done',
+                  label: sub.isRunning ? t('live.thinking') : t('live.done'),
+                  detail: '',
+                  stepProgress: '',
+                  startedAtMs: sub.lastModifiedMs || 0,
+                };
+                patchClasses(subRefs.rowEl, { 'is-done': !sub.isRunning });
+                const subBadgeCls = getAgentBadgeClass(sub.index || 1, false);
+                patchAttr(subRefs.subBadge, 'class', `agent-badge ${subBadgeCls}`);
+                patchText(subRefs.subBadge, formatAgentBadgeText(sub));
+                patchText(subRefs.subRole, sub.role || sub.shortLabel || t('fmt.subAgent'));
+
+                const subProg = subAct.stepProgress ? ` [${subAct.stepProgress}]` : '';
+                const translatedSubLabel = translateLiveActivityText(subAct.label) || t('live.running');
+                const translatedSubDetail = translateLiveActivityText(subAct.detail || '');
+                const summaryText = sub.isRunning
+                  ? `${translatedSubLabel}${subProg}${translatedSubDetail ? ` · ${translatedSubDetail}` : ''}`
+                  : t('live.doneWithSteps', { steps: sub.stepCount || 0 });
+                patchText(subRefs.subSummary, summaryText);
+
+                const subTimerKey = `sub:${sub.cascadeId}`;
+                if (sub.isRunning) {
+                  activeTimerKeys.add(subTimerKey);
+                  bindMultiElapsedTimer(
+                    subTimerKey,
+                    `${sub.cascadeId}:${subAct.signature || subAct.label}`,
+                    subAct.startedAtMs || sub.lastModifiedMs,
+                    subRefs.subElapsed
+                  );
+                } else {
+                  multiTimersMap.delete(subTimerKey);
+                  patchText(
+                    subRefs.subElapsed,
+                    t('header.convMetaSteps', { count: sub.stepCount || 0 })
+                  );
+                }
+              },
+            });
+          }
+        },
+      });
+
+      for (const k of [...multiTimersMap.keys()]) {
+        if (!activeTimerKeys.has(k)) {
+          multiTimersMap.delete(k);
+        }
+      }
+      ensureMultiLiveTicker();
+      tickMultiElapsedDisplay();
+    }
+  }
+
+  function findConversationSummary(telemetry, targetCid) {
+    const cidLower = String(targetCid || '').trim().toLowerCase();
+    if (!cidLower || !telemetry) return null;
+    const convs = Array.isArray(telemetry.conversations) ? telemetry.conversations : [];
+    const found = convs.find((c) => String(c?.cascadeId || '').toLowerCase() === cidLower);
+    if (found) return found;
+    const running = Array.isArray(telemetry.runningConversations) ? telemetry.runningConversations : [];
+    return running.find((c) => String(c?.cascadeId || '').toLowerCase() === cidLower) || null;
+  }
+
+  function buildSlotContextForSurface(telemetry, surface, activeSlotCtx) {
+    if (!telemetry) return { hasTelemetry: false };
+    const targetCid = String(surface?.cascadeId || '').trim();
+    const activeCid = String(telemetry.activeConversation?.cascadeId || '').trim();
+    if (!targetCid || (targetCid !== '__new__' && activeCid && targetCid.toLowerCase() === activeCid.toLowerCase())) {
+      return activeSlotCtx;
+    }
+    const conv = targetCid === '__new__' ? null : findConversationSummary(telemetry, targetCid);
+    const quotaDisplayMode = normalizeClientQuotaDisplayMode(telemetry.settings?.quotaDisplayMode);
+    if (!conv) {
+      return {
+        hasTelemetry: true,
+        context: null,
+        usedPct: 0,
+        dashOffset: RING_CIRCUMFERENCE,
+        isRunning: false,
+        tps: null,
+        avgTps: null,
+        ttft: null,
+        stepCost: null,
+        sessionCost: null,
+        cacheHitPct: null,
+        latestPromptTokens: null,
+        sessionTokens: null,
+        quotas: telemetry.quotas,
+        quotaDisplayMode,
+      };
+    }
+    const usedPct = Number.isFinite(Number(conv.contextUsedPct))
+      ? Math.max(0, Math.min(100, Number(conv.contextUsedPct)))
+      : 0;
+    const dashOffset = +(RING_CIRCUMFERENCE * (1 - usedPct / 100)).toFixed(2);
+    return {
+      hasTelemetry: true,
+      context: conv.contextBreakdown || conv.context || null,
+      usedPct,
+      dashOffset,
+      isRunning: Boolean(conv.isRunning),
+      tps: conv.latestTokPerSec ?? null,
+      avgTps: conv.avgTokPerSec ?? null,
+      ttft: conv.latestTtftSec ?? null,
+      stepCost: conv.latestStepCostUsd ?? null,
+      sessionCost: conv.sessionCostUsd ?? null,
+      cacheHitPct:
+        Number(conv.stepCount || 0) > 0 ? conv.latestCacheHitPct ?? null : null,
+      latestPromptTokens: conv.latestPromptTokens ?? null,
+      sessionTokens: conv.totalTokens ?? null,
+      quotas: telemetry.quotas,
+      quotaDisplayMode,
+    };
   }
 
   function renderHoverWidgets() {
     const { telemetry, minuteTick } = telemetryStore.getState();
+    let hoverData = telemetry;
+    const anchorCid = String(getActiveAnchorSurface()?.cascadeId || '').trim();
+    const activeCid = String(telemetry?.activeConversation?.cascadeId || '').trim();
+    if (telemetry && anchorCid === '__new__') {
+      hoverData = {
+        ...telemetry,
+        activeConversation: {
+          cascadeId: '__new__',
+          title: t('live.currentSession'),
+          isRunning: false,
+          stepCount: 0,
+          hasSubagents: false,
+          agents: [],
+          latestTokPerSec: null,
+          latestTtftSec: null,
+          avgTokPerSec: null,
+          latestStepCostUsd: null,
+          sessionCostUsd: 0,
+          latestCacheHitPct: null,
+          latestPromptTokens: 0,
+          totalTokens: 0,
+          activeModelShort: '',
+          activeModelUpstream: '',
+          context: {
+            totalTokens: 0,
+            limitTokens: 256000,
+            compactionLimitTokens: 256000,
+            usedPct: 0,
+          },
+        },
+      };
+    } else if (
+      telemetry &&
+      anchorCid &&
+      (!activeCid || anchorCid.toLowerCase() !== activeCid.toLowerCase())
+    ) {
+      const conv = findConversationSummary(telemetry, anchorCid);
+      if (conv) {
+        const ctxLimit = Number(conv.contextLimitTokens || 256000);
+        const ctxPct = Number(conv.contextUsedPct || 0);
+        const ctxTotal = Number(conv.contextTotalTokens ?? Math.round((ctxPct / 100) * ctxLimit));
+        hoverData = {
+          ...telemetry,
+          activeConversation: {
+            cascadeId: conv.cascadeId,
+            title: conv.title || anchorCid.slice(0, 8),
+            isRunning: Boolean(conv.isRunning),
+            stepCount: Number(conv.stepCount || 0),
+            hasSubagents: false,
+            agents: [],
+            latestTokPerSec: conv.latestTokPerSec ?? null,
+            latestTtftSec: conv.latestTtftSec ?? null,
+            avgTokPerSec: conv.avgTokPerSec ?? null,
+            latestStepCostUsd: conv.latestStepCostUsd ?? null,
+            sessionCostUsd: conv.sessionCostUsd ?? null,
+            latestCacheHitPct: conv.latestCacheHitPct ?? null,
+            latestPromptTokens: conv.latestPromptTokens ?? 0,
+            totalTokens: conv.totalTokens ?? 0,
+            activeModelShort: conv.modelShort || '',
+            activeModelUpstream: conv.modelUpstream || conv.modelShort || '',
+            context: {
+              ...(conv.contextBreakdown || conv.context || {}),
+              totalTokens: ctxTotal,
+              limitTokens: ctxLimit,
+              compactionLimitTokens: ctxLimit,
+              usedPct: ctxPct,
+            },
+          },
+        };
+      }
+    }
     hoverWidgetHost.update({
       moduleKeys: normalizeClientHoverModules(telemetry?.settings?.hoverModules),
-      data: telemetry,
+      data: hoverData,
       minuteTick: Number(minuteTick || Math.floor(Date.now() / 30000)),
     });
   }
 
-  // --- 4. 实时遥测状态绑定（双胶囊与多会话/动态组件浮层就地更新，零硬编码、零布局跳动） ---
+  // --- 4. / ---
   function renderCapsuleTelemetry() {
     if (disposed) return;
     const telSt = telemetryStore.getState();
@@ -2334,12 +3418,16 @@ export function mountWindowOverlay() {
     const telemetry = telSt.telemetry;
 
     setI18nLanguage(telemetry?.settings?.language);
-    syncPortalAppearance(telemetry?.settings);
-    syncCapsuleOsAttr();
+    for (const s of getAllCapsuleSurfaces()) {
+      applyAppearanceToRoot(s.capsuleHost, telemetry?.settings, { includeFontScale: false });
+    }
+    applyAppearanceToRoot(portalHost, telemetry?.settings, { includeFontScale: true });
 
     const showMulti = telemetry?.settings?.showTopbarMultiSession !== false;
-    patchAttr(multiBtn, 'hidden', !showMulti);
-    patchAttr(capsuleHost, 'data-multi', showMulti ? 'on' : 'off');
+    for (const s of getAllCapsuleSurfaces()) {
+      patchAttr(s.multiBtn, 'hidden', !showMulti);
+      patchAttr(s.capsuleHost, 'data-multi', showMulti ? 'on' : 'off');
+    }
     if (!showMulti && multiOpen) {
       setMultiOpen(false);
     }
@@ -2354,12 +3442,13 @@ export function mountWindowOverlay() {
     }
 
     if (!telemetry) {
-      patchClasses(multiBtn, { 'is-running': false, 'is-waiting': false });
-      patchText(multiLabel, t('capsule.multiZero'));
+      for (const s of getAllCapsuleSurfaces()) {
+        patchClasses(s.multiBtn, { 'is-running': false, 'is-waiting': false });
+        patchText(s.multiLabel, t('capsule.multiZero'));
+        syncCapsuleSlotNodes(s.capsuleSlots, s.capsuleSeps, slotKeys, { hasTelemetry: false });
+      }
       patchText(multiRunningMetaEl, t('multi.loading'));
-      multiRunningWidget.refs.stopLiveTicker();
-
-      applyCapsuleSlots(slotKeys, { hasTelemetry: false });
+      stopMultiLiveTicker();
       return;
     }
 
@@ -2370,36 +3459,146 @@ export function mountWindowOverlay() {
       uiSt.selectedAgentScope,
       uiSt.ctxInspectorAgentId
     );
-    const overviewActive = overviewScopedConv || telemetry.activeConversation || {};
-    const slotCtx = buildCapsuleSlotContext(telemetry, {
-      scopedConv: capsuleScopedConv,
-      overviewConv: overviewActive,
-      ctxAgent,
-      aggregated,
-    });
-    const { rawRunningList, runningCount, runningSubCount, hasWaiting, multiBtnText } =
-      resolveMultiSessionCapsuleState(telemetry, {
-        agents,
-        aggregated,
-        latestTokPerSec: overviewActive.latestTokPerSec ?? null,
-        contextUsedPct: slotCtx.usedPct,
-      });
+    const activeConv = telemetry.activeConversation || {};
+    const overviewActive = overviewScopedConv || activeConv;
+    const ctx = ctxAgent?.context || overviewActive.context || activeConv.context || {};
+    const limitTokens = Number(ctx.compactionLimitTokens || ctx.limitTokens || 256000);
+    const totalTokens = Number(ctx.totalTokens || 0);
+    const usedPct =
+      limitTokens > 0 ? Math.min(100, +((totalTokens / limitTokens) * 100).toFixed(2)) : 0;
+    const dashOffset = +(
+      RING_CIRCUMFERENCE *
+      (1 - Math.max(0, Math.min(100, usedPct)) / 100)
+    ).toFixed(2);
+    // --- 4a. ---
+    const rawRunningList =
+      Array.isArray(telemetry.runningConversations) && telemetry.runningConversations.length > 0
+        ? telemetry.runningConversations
+        : activeConv.isRunning || aggregated?.isRunning
+          ? [
+              {
+                cascadeId: activeConv.cascadeId || 'current',
+                title: activeConv.title || t('live.currentSession'),
+                isCurrentSelected: true,
+                isMainRunning: Boolean(activeConv.isRunning),
+                isRunning: true,
+                mainActivity: activeConv.liveActivity || aggregated?.liveActivity || null,
+                subagentCount: Math.max(0, (agents?.length || 1) - 1),
+                runningSubagentCount: (agents || []).filter((a) => !a.isMain && a.isRunning).length,
+                latestTokPerSec: overviewActive.latestTokPerSec ?? null,
+                contextUsedPct: usedPct,
+                subagents: (agents || [])
+                  .filter((a) => !a.isMain)
+                  .map((s, idx) => ({
+                    cascadeId: s.cascadeId || s.agentId,
+                    index: s.index || idx + 1,
+                    badgeText: s.badgeText || t('fmt.subBadge', { index: idx + 1 }),
+                    shortLabel: s.shortLabel || `${t('fmt.subAgent')} #${idx + 1}`,
+                    role: s.role || `${t('fmt.subAgent')} #${idx + 1}`,
+                    isRunning: Boolean(s.isRunning),
+                    stepCount: Number(s.stepCount || 0),
+                    lastModifiedMs: s.lastModifiedMs || 0,
+                    liveActivity: s.liveActivity || {
+                      phase: s.isRunning ? 'thinking' : 'done',
+                      label: s.isRunning ? t('live.thinking') : t('live.done'),
+                      detail: '',
+                      stepProgress: '',
+                      startedAtMs: s.lastModifiedMs || 0,
+                      signature: `${s.agentId}:${s.stepCount || 0}`,
+                    },
+                  })),
+              },
+            ]
+          : [];
 
-    patchClasses(multiBtn, {
-      'is-running': runningCount > 0 && !hasWaiting,
-      'is-waiting': runningCount > 0 && hasWaiting,
-    });
-    patchText(multiLabel, multiBtnText);
-
-    renderMultiRunningPanel(
-      rawRunningList,
-      runningCount,
-      runningSubCount,
-      telSt.hostRouteConversationId
+    const runningCount = rawRunningList.length;
+    const runningSubCount = rawRunningList.reduce(
+      (acc, item) => acc + Number(item.runningSubagentCount || 0),
+      0
     );
+    const hasWaiting = rawRunningList.some((item) => item.mainActivity?.phase === 'waiting');
 
-    patchClasses(capsuleBtn, { 'is-running': slotCtx.isRunning });
-    applyCapsuleSlots(slotKeys, slotCtx);
+    const multiBtnText =
+      runningCount > 0
+        ? runningSubCount > 0
+          ? t('capsule.multiRunningWithSubs', { count: runningCount, subs: runningSubCount })
+          : t('capsule.multiRunning', { count: runningCount })
+        : t('capsule.multiZero');
+    for (const s of getAllCapsuleSurfaces()) {
+      patchClasses(s.multiBtn, {
+        'is-running': runningCount > 0 && !hasWaiting,
+        'is-waiting': runningCount > 0 && hasWaiting,
+      });
+      patchText(s.multiLabel, multiBtnText);
+    }
+
+    renderMultiRunningPanel(rawRunningList, runningCount, runningSubCount, telSt.hostRouteConversationId);
+
+    // --- 4b. 1..5 ---
+    const isRunning = Boolean(aggregated?.isRunning || activeConv.isRunning);
+    const capActive = capsuleScopedConv || aggregated || activeConv || {};
+    const tps =
+      capsuleScopedConv?.latestTokPerSec ??
+      aggregated?.latestTokPerSec ??
+      activeConv.latestTokPerSec ??
+      null;
+    const avgTps =
+      capsuleScopedConv?.avgTokPerSec ??
+      aggregated?.avgTokPerSec ??
+      activeConv.avgTokPerSec ??
+      null;
+    const ttft =
+      capsuleScopedConv?.latestTtftSec ??
+      aggregated?.latestTtftSec ??
+      activeConv.latestTtftSec ??
+      null;
+    const capsuleStepCost =
+      capsuleScopedConv?.latestStepCostUsd ??
+      aggregated?.latestStepCostUsd ??
+      activeConv.latestStepCostUsd ??
+      null;
+    const sessionCost =
+      capsuleScopedConv?.sessionCostUsd ??
+      aggregated?.sessionCostUsd ??
+      activeConv.sessionCostUsd ??
+      null;
+    const cacheHitPct =
+      Number(capActive.stepCount || 0) > 0
+        ? capActive.latestCacheHitPct ?? capActive.sessionCacheHitPct ?? null
+        : null;
+    const latestPromptTokens = capActive.latestPromptTokens ?? null;
+    const capInTok = Math.max(0, Number(capActive.inputTokens || 0));
+    const capCacheTok = Math.max(0, Number(capActive.cacheReadTokens || 0));
+    const capOutTok = Math.max(0, Number(capActive.outputTokens || 0));
+    const sessionTokens =
+      Number(capActive.stepCount || 0) > 0 ||
+      capActive.totalTokens != null ||
+      capInTok + capCacheTok + capOutTok > 0
+        ? Math.max(0, Number(capActive.totalTokens ?? capInTok + capCacheTok + capOutTok))
+        : null;
+
+    const activeSlotCtx = {
+      hasTelemetry: true,
+      context: ctx,
+      usedPct,
+      dashOffset,
+      isRunning,
+      tps,
+      avgTps,
+      ttft,
+      stepCost: capsuleStepCost,
+      sessionCost,
+      cacheHitPct,
+      latestPromptTokens,
+      sessionTokens,
+      quotas: telemetry.quotas,
+      quotaDisplayMode: normalizeClientQuotaDisplayMode(telemetry.settings?.quotaDisplayMode),
+    };
+    for (const s of getAllCapsuleSurfaces()) {
+      const sCtx = buildSlotContextForSurface(telemetry, s, activeSlotCtx);
+      patchClasses(s.capsuleBtn, { 'is-running': Boolean(sCtx.isRunning) });
+      syncCapsuleSlotNodes(s.capsuleSlots, s.capsuleSeps, slotKeys, sCtx);
+    }
 
     const updateMode = normalizeClientUpdateMode(
       telemetry.settings?.pluginUpdateMode,
@@ -2408,21 +3607,25 @@ export function mountWindowOverlay() {
     const showUpdatePrompt =
       Boolean(telemetry.cloudStatus?.updateAvailable) && updateMode !== 'off';
     const latestVer = telemetry.cloudStatus?.latestPluginVersion || '';
-    patchAttr(updateDot, 'hidden', !showUpdatePrompt);
-    patchAttr(topbarUpdateBtn, 'hidden', !showUpdatePrompt);
+    for (const s of getAllCapsuleSurfaces()) {
+      patchAttr(s.updateDot, 'hidden', !showUpdatePrompt);
+      patchAttr(s.topbarUpdateBtn, 'hidden', !showUpdatePrompt);
+      if (showUpdatePrompt) {
+        if (!isTopbarUpdating) {
+          patchText(s.topbarUpdateLabel, latestVer ? `v${latestVer}` : t('capsule.newVersion'));
+        }
+        patchAttr(s.topbarUpdateBtn, 'title', t('capsule.ariaUpdateTitle'));
+      }
+    }
     patchAttr(hoverUpdateBar, 'hidden', !showUpdatePrompt);
     if (showUpdatePrompt) {
-      if (!isTopbarUpdating) {
-        patchText(topbarUpdateLabel, latestVer ? `v${latestVer}` : t('capsule.newVersion'));
-      }
-      patchAttr(topbarUpdateBtn, 'title', t('capsule.ariaUpdateTitle'));
       patchText(
         hoverUpdateVerText,
         latestVer
           ? t('capsule.hoverNewVer', { ver: latestVer })
           : t('capsule.hoverNewVerGeneric')
       );
-      const isComposerDock = capsuleHost.getAttribute('data-dock') === 'composer';
+      const isComposerDock = getActiveAnchorSurface().capsuleHost.getAttribute('data-dock') === 'composer';
       patchText(
         hoverUpdateHintText,
         latestVer
@@ -2439,7 +3642,7 @@ export function mountWindowOverlay() {
       updateResponsiveLayout();
     }
 
-    // --- 同步动态悬停组件宿主（0 项且无更新提示时自动关闭悬停窗，点击完整浮窗不受影响） ---
+    // --- 0 ---
     const hoverModuleKeys = normalizeClientHoverModules(telemetry.settings?.hoverModules);
     patchAttr(hoverWidgetsContainer, 'hidden', hoverModuleKeys.length === 0);
     if (hoverModuleKeys.length === 0 && !showUpdatePrompt && tooltipOpen) {
@@ -2455,6 +3658,9 @@ export function mountWindowOverlay() {
     telemetryStore.getState().telemetry?.settings?.windowMountMode,
     telemetryStore.getState().telemetry?.settings?.enableWindowOverlay
   );
+  let lastAppliedPermLeft = Boolean(
+    telemetryStore.getState().telemetry?.settings?.moveComposerPermissionLeft
+  );
 
   const unsubStore = telemetryStore.subscribe(
     (st) => ({
@@ -2468,14 +3674,17 @@ export function mountWindowOverlay() {
         slice.telemetry?.settings?.windowMountMode,
         slice.telemetry?.settings?.enableWindowOverlay
       );
+      const nextPermLeft = Boolean(slice.telemetry?.settings?.moveComposerPermissionLeft);
       if (slice.telemetry?.settings?.enableWindowOverlay === false || nextMountMode === 'sidebar') {
         if (popoverOpen) setPopoverOpen(false);
         if (multiOpen) setMultiOpen(false);
-      } else if (nextMountMode !== lastAppliedMountMode) {
+      } else if (nextMountMode !== lastAppliedMountMode || nextPermLeft !== lastAppliedPermLeft) {
         lastAppliedMountMode = nextMountMode;
+        lastAppliedPermLeft = nextPermLeft;
         ensureCapsuleDocked();
       }
       lastAppliedMountMode = nextMountMode;
+      lastAppliedPermLeft = nextPermLeft;
       renderCapsuleTelemetry();
       if (popoverOpen) {
         positionFloatingElements();
@@ -2511,10 +3720,12 @@ export function mountWindowOverlay() {
   const unsubI18n = i18nStore.subscribe(
     (st) => st.locale,
     () => {
-      patchAttr(multiBtn, 'aria-label', t('capsule.ariaMulti'));
-      patchAttr(capsuleBtn, 'aria-label', t('capsule.ariaMonitor'));
-      patchAttr(topbarUpdateBtn, 'aria-label', t('capsule.ariaUpdateTitle'));
-      patchAttr(topbarUpdateBtn, 'title', t('capsule.ariaUpdateTitle'));
+      for (const s of getAllCapsuleSurfaces()) {
+        patchAttr(s.multiBtn, 'aria-label', t('capsule.ariaMulti'));
+        patchAttr(s.capsuleBtn, 'aria-label', t('capsule.ariaMonitor'));
+        patchAttr(s.topbarUpdateBtn, 'aria-label', t('capsule.ariaUpdateTitle'));
+        patchAttr(s.topbarUpdateBtn, 'title', t('capsule.ariaUpdateTitle'));
+      }
       patchAttr(multiPanelEl, 'aria-label', t('multi.ariaDialog'));
       patchAttr(popoverEl, 'aria-label', t('capsule.ariaMonitor'));
       patchText(multiPinBadge, t('multi.pinned'));
@@ -2524,7 +3735,7 @@ export function mountWindowOverlay() {
     }
   );
 
-  // --- 5. 宿主会话路由跟随与全局交互监听 ---
+  // --- 5. ---
   function syncHostRouteIfChanged() {
     if (disposed) return;
     const currentRouteId = extractHostRouteCascadeId();
@@ -2541,10 +3752,11 @@ export function mountWindowOverlay() {
   }
 
   const onDocMouseDown = (e) => {
-    if (popoverOpen && !isEventInside(e, popoverEl) && !isEventInside(e, capsuleHost)) {
+    const insideAnyCapsule = getAllCapsuleSurfaces().some((s) => isEventInside(e, s.capsuleHost));
+    if (popoverOpen && !isEventInside(e, popoverEl) && !insideAnyCapsule) {
       setPopoverOpen(false);
     }
-    if (multiOpen && !isEventInside(e, multiPanelEl) && !isEventInside(e, capsuleHost)) {
+    if (multiOpen && !isEventInside(e, multiPanelEl) && !insideAnyCapsule) {
       setMultiOpen(false);
     }
   };
@@ -2576,7 +3788,7 @@ export function mountWindowOverlay() {
   const onVisibilityChange = () => {
     if (document.hidden) {
       uiStore.setState({ monitorVisible: false });
-      multiRunningWidget.refs.pauseTicker();
+      pauseMultiLiveTicker();
       hasPointerCoords = false;
       if (tooltipOpen) {
         setTooltipOpen(false);
@@ -2616,7 +3828,7 @@ export function mountWindowOverlay() {
           if (
             Array.isArray(records) &&
             records.length > 0 &&
-            records.every((r) => r?.target === capsuleHost || r?.target === portalHost)
+            records.every((r) => isAnyOverlayHostNode(r?.target))
           ) {
             return;
           }
@@ -2638,7 +3850,7 @@ export function mountWindowOverlay() {
       }
     }
   } catch {
-    // 忽略观察器初始化异常
+    
   }
 
   document.addEventListener?.('mousedown', onDocMouseDown, true);
@@ -2678,28 +3890,28 @@ export function mountWindowOverlay() {
 
   const handle = {
     bundleVersion,
-    [WINDOW_OVERLAY_METHODS.ensureAlive]() {
+    ensureAlive() {
       if (disposed) return false;
       return ensureCapsuleDocked();
     },
-    [WINDOW_OVERLAY_METHODS.syncHostRoute]() {
+    syncHostRoute() {
       if (disposed) return false;
       syncHostRouteIfChanged();
       return true;
     },
-    [WINDOW_OVERLAY_METHODS.updateBridge](nextBridge) {
+    updateBridge(nextBridge) {
       if (disposed || !nextBridge || typeof nextBridge !== 'object') return false;
       const port = Number(nextBridge.port || 0);
       const token = String(nextBridge.token || '');
       if (!Number.isInteger(port) || port <= 0 || !token) return false;
-      const cur = readInjectedWindowBridge() || {};
+      const cur = window.__AGUsageMonitorBridge || {};
       const portChanged = Number(cur.port || 0) !== port || String(cur.token || '') !== token;
       cur.port = port;
       cur.token = token;
       if (portChanged) {
         cur.transportMode = 'http';
       }
-      window[WINDOW_BRIDGE_KEY] = cur;
+      window.__AGUsageMonitorBridge = cur;
       void fetchTelemetry({ force: false });
       return true;
     },
@@ -2709,7 +3921,7 @@ export function mountWindowOverlay() {
     getLastPointer() {
       return hasPointerCoords ? { x: lastPointerX, y: lastPointerY } : null;
     },
-    [WINDOW_OVERLAY_METHODS.deliverRpc](responses) {
+    deliverRpc(responses) {
       if (disposed) return 0;
       return deliverCdpBridgeResponses(responses);
     },
@@ -2734,13 +3946,14 @@ export function mountWindowOverlay() {
     isMultiHoverOpen: () => Boolean(multiOpen && !multiPinned),
     isMultiPinnedOpen: () => Boolean(multiOpen && multiPinned),
     getLayoutMode: () => layoutMode,
-    [WINDOW_OVERLAY_METHODS.getDockKind]: () => String(capsuleHost.getAttribute('data-dock') || ''),
-    [WINDOW_OVERLAY_METHODS.getMountMode]: () => lastAppliedMountMode,
-    [WINDOW_OVERLAY_METHODS.applyMountMode](nextMode) {
+    getDockKind: () => String(capsuleHost.getAttribute('data-dock') || ''),
+    getMountMode: () => lastAppliedMountMode,
+    applyMountMode(nextMode) {
       if (disposed) return false;
       const normalized = normalizeClientWindowMountMode(nextMode, nextMode !== 'sidebar');
-      const bridgeConfig = readInjectedWindowBridge();
-      if (bridgeConfig) bridgeConfig.mountMode = normalized;
+      if (typeof window !== 'undefined' && window.__AGUsageMonitorBridge) {
+        window.__AGUsageMonitorBridge.mountMode = normalized;
+      }
       const curTel = telemetryStore.getState().telemetry;
       if (curTel?.settings) {
         telemetryStore.setState({
@@ -2757,7 +3970,7 @@ export function mountWindowOverlay() {
       lastAppliedMountMode = normalized;
       return ensureCapsuleDocked();
     },
-    [WINDOW_OVERLAY_METHODS.dispose]() {
+    dispose() {
       if (disposed) return;
       disposed = true;
       clearInterval(watchdogTimer);
@@ -2769,7 +3982,7 @@ export function mountWindowOverlay() {
         clearTimeout(multiLeaveTimer);
         multiLeaveTimer = null;
       }
-      multiRunningWidget.refs.stopLiveTicker();
+      stopMultiLiveTicker();
       if (dockRafId && typeof cancelAnimationFrame === 'function') {
         cancelAnimationFrame(dockRafId);
         dockRafId = 0;
@@ -2798,6 +4011,12 @@ export function mountWindowOverlay() {
       window.removeEventListener?.('popstate', onPopState);
       navigator?.windowControlsOverlay?.removeEventListener?.('geometrychange', onWindowResize);
       restorePatchedActionToolbar();
+      cancelCapsuleSlotAnimations(primarySurface.capsuleSlots);
+      clearSurfaceComposerPermLayout(primarySurface);
+      for (const [keyNode, surf] of [...splitCapsulesMap.entries()]) {
+        disposeSecondarySplitSurface(keyNode, surf);
+      }
+      syncComposerLayoutStyleElement(false);
       try {
         hoverWidgetHost.destroy();
       } catch {}
@@ -2810,12 +4029,12 @@ export function mountWindowOverlay() {
       try {
         portalHost.remove();
       } catch {}
-      if (window[WINDOW_OVERLAY_KEY] === handle) {
-        delete window[WINDOW_OVERLAY_KEY];
+      if (window.__AGUsageMonitorOverlay === handle) {
+        delete window.__AGUsageMonitorOverlay;
       }
     },
   };
 
-  window[WINDOW_OVERLAY_KEY] = handle;
+  window.__AGUsageMonitorOverlay = handle;
   return handle;
 }

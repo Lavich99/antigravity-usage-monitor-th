@@ -1,29 +1,29 @@
 /**
- * 客户端观测请求级吞吐率（TPS）、首字延迟（TTFT）、上下文构成拆解与模型身份归因计算模块。
+ * TPS TTFT 
  *
- * 核心设计原则：
- * 1. 采用客户端观测到的端到端请求耗时（包含排队等待、思考与工具调用生成），对纯文本生成与工具调用采用统一公式计算。
- * 2. 严禁基于速率上限裁剪异常值或动态篡改分母（如扣除思考时间或仅取流式片段耗时），保证统计口径客观一致。
+ * 
+ * 1. 
+ * 2. 
  */
 
-/** 速度测量口径版本号；当耗时或样本过滤算法变更时递增，用于触发旧版缓存测量字段失效重算 */
+/** */
 export const MEASUREMENT_VERSION = 4;
 
-/** 模型身份归因版本号；当模型识别优先级或占位符清洗策略变更时递增 */
+/** */
 export const MODEL_IDENTITY_VERSION = 1;
 
-/** 纳入有效测速的最小请求总耗时阈值（0.5 秒），过滤极短请求因时钟抖动导致的速率失真 */
+/** 0.5 */
 export const MIN_SPEED_DURATION_SECONDS = 0.5;
 
-/** 纳入平均吞吐率（Mean TPS）统计的最小输出 Token 数阈值（50 Tokens），避免短回复被首字延迟主导 */
+/** Mean TPS Token 50 Tokens */
 export const MIN_MEAN_OUTPUT_TOKENS = 50;
 
 /**
- * 解析 ISO-8601 时间戳字符串为亚毫秒精度的浮点毫秒时间戳。
- * 标准 `Date.parse` 仅保留到整数毫秒，本函数额外提取小数部分以保留亚毫秒精度。
+ * ISO-8601 
+ * `Date.parse` 
  *
- * @param {unknown} value ISO-8601 时间戳字符串
- * @returns {number} 毫秒时间戳（含小数部分），解析失败时返回 0
+ * @param {unknown} value ISO-8601 
+ * @returns {number} 0
  */
 export function parseIsoMs(value) {
   if (typeof value !== 'string' || !value) {
@@ -41,10 +41,10 @@ export function parseIsoMs(value) {
 }
 
 /**
- * 解析 Protobuf Duration 格式字符串（如 `"0.85s"`）为非负秒数。
+ * Protobuf Duration `"0.85s"` 
  *
- * @param {unknown} value 原始耗时字符串
- * @returns {number | null} 非负秒数（浮点数），无效时返回 null
+ * @param {unknown} value 
+ * @returns {number | null} null
  */
 function duration(value) {
   if (typeof value !== 'string' || !/^\d+(?:\.\d+)?s$/.test(value)) {
@@ -55,10 +55,10 @@ function duration(value) {
 }
 
 /**
- * 校验输入值是否为合法的非负安全整数计数值（支持数字或纯数字字符串）。
+ * 
  *
- * @param {unknown} value 待校验的 Token 计数值
- * @returns {boolean} 是否为合法非负安全整数
+ * @param {unknown} value Token 
+ * @returns {boolean} 
  */
 function validCount(value) {
   const isNumericType =
@@ -72,7 +72,7 @@ function validCount(value) {
 }
 
 /**
- * 将原始 Token 计数值安全归一化为非负整数；对负数、NaN、Infinity、空数组/对象或非法字符串统一回退为 0。
+ * Token NaN Infinity / 0 
  *
  * @param {unknown} value
  * @returns {number}
@@ -94,15 +94,15 @@ function safeTokenCount(value) {
 }
 
 /**
- * 将 ISO-8601 时间戳解析为纳秒级 `BigInt` 时间戳。
+ * ISO-8601 `BigInt` 
  *
- * 为什么必须使用 `BigInt` 纳秒而非 `Number` 浮点数：
- * Unix 纪元纳秒时间戳数量级约为 `1.7e18`，已超出 IEEE-754 双精度浮点数 `Number.MAX_SAFE_INTEGER`（`9e15`）的精确表示范围。
- * 若直接转为 `Number` 或在毫秒级做四舍五入，原本 `499,999,999 ns`（499.999999ms）的请求会被舍入为 `0.500s`，
- * 从而错误跨过 `MIN_SPEED_DURATION_SECONDS`（0.5s）的有效性阈值。先以 `BigInt` 精确存储纳秒并做差，再将小差值转为 `Number`，可彻底消除精度丢失。
+ * `BigInt` `Number` 
+ * Unix `1.7e18` IEEE-754 `Number.MAX_SAFE_INTEGER` `9e15` 
+ * `Number` `499,999,999 ns` 499.999999ms `0.500s` 
+ * `MIN_SPEED_DURATION_SECONDS` 0.5s `BigInt` `Number` 
  *
- * @param {unknown} value ISO-8601 时间戳字符串
- * @returns {bigint | null} 纳秒级 BigInt 时间戳，格式不合法时返回 null
+ * @param {unknown} value ISO-8601 
+ * @returns {bigint | null} BigInt null
  */
 function timestampNs(value) {
   if (typeof value !== 'string') {
@@ -123,12 +123,12 @@ function timestampNs(value) {
 }
 
 /**
- * 计算请求开始与结束时间戳之间的精确秒数耗时。
- * 先在 `BigInt` 纳秒域内执行减法（`end - start`），再除以 `1e9` 转为浮点秒数，防止毫秒级舍入把 499.999ms 请求误判跨过 0.5s 阈值。
+ * 
+ * `BigInt` `end - start` `1e9` 499.999ms 0.5s 
  *
- * @param {unknown} startValue 请求开始时间（`createdAt`）
- * @param {unknown} endValue 请求结束时间（`finishedGeneratingAt` 或 `completedAt`）
- * @returns {number | null} 精确到纳秒的请求耗时秒数，时间戳缺失或倒挂时返回 null
+ * @param {unknown} startValue `createdAt` 
+ * @param {unknown} endValue `finishedGeneratingAt` `completedAt` 
+ * @returns {number | null} null
  */
 function requestDuration(startValue, endValue) {
   const start = timestampNs(startValue);
@@ -140,21 +140,21 @@ function requestDuration(startValue, endValue) {
 }
 
 /**
- * 计算两个毫秒时间戳之间的経過秒数。
+ * 
  *
- * @param {number} start 起始毫秒时间戳
- * @param {number} end 结束毫秒时间戳
- * @returns {number | null} 経過秒数，无效时返回 null
+ * @param {number} start 
+ * @param {number} end 
+ * @returns {number | null} null
  */
 function elapsed(start, end) {
   return start > 0 && end >= start ? (end - start) / 1000 : null;
 }
 
 /**
- * 基于 UTF-8 字节长度估算文本的 Token 数量（经验比例：约每 3 个 UTF-8 字节折合 1 个 Token，向上取整）。
+ * UTF-8 Token 3 UTF-8 1 Token 
  *
- * @param {unknown} text 待估算的原始文本
- * @returns {number} 估算的 Token 数量
+ * @param {unknown} text 
+ * @returns {number} Token 
  */
 function estimateUtf8Tokens(text) {
   if (typeof text !== 'string' || !text) {
@@ -164,10 +164,10 @@ function estimateUtf8Tokens(text) {
 }
 
 /**
- * 根据系统提示词分块（Prompt Section）的名称或标题将其归类到具体的上下文子桶。
+ * Prompt Section 
  *
- * @param {unknown} name 分块名称或标题
- * @returns {'skills' | 'userRules' | 'mcpTools' | 'systemPrompt'} 归属的上下文分类键名
+ * @param {unknown} name 
+ * @returns {'skills' | 'userRules' | 'mcpTools' | 'systemPrompt'} 
  */
 function classifyPromptSection(name, type = '') {
   const key = String(name || type || '')
@@ -198,12 +198,12 @@ function classifyPromptSection(name, type = '') {
 }
 
 /**
- * 判断某个工具项是否属于 MCP（Model Context Protocol）扩展工具或资源调用工具。
+ * MCP Model Context Protocol 
  *
- * @param {unknown} name 工具名称
- * @param {unknown} [source=''] 工具来源标识
- * @param {unknown} [type=''] 工具类型标识
- * @returns {boolean} 是否归属于 MCP 工具分类
+ * @param {unknown} name 
+ * @param {unknown} [source=''] 
+ * @param {unknown} [type=''] 
+ * @returns {boolean} MCP 
  */
 function isMcpToolItem(name, source = '', type = '') {
   const n = String(name || '').trim().toLowerCase();
@@ -221,7 +221,7 @@ function isMcpToolItem(name, source = '', type = '') {
 }
 
 /**
- * 识别 `TOKEN_TYPE_CHAT_MESSAGES` 子项（如 `"391: CHECKPOINT"`、`"404: GENERIC"`）所属的对话细分类型。
+ * `TOKEN_TYPE_CHAT_MESSAGES` `"391: CHECKPOINT"` `"404: GENERIC"` 
  *
  * @param {object} child
  * @returns {'checkpoint'|'assistant'|'subagent'|'userInput'|'toolResults'}
@@ -245,12 +245,12 @@ function classifyChatMessageChild(child) {
   if (stepType.includes('USER_INPUT') || stepType === 'USER') {
     return 'userInput';
   }
-  // GENERIC, VIEW_FILE, RUN_COMMAND, CODE_ACTION 等均为工具调用返回结果
+  // GENERIC, VIEW_FILE, RUN_COMMAND, CODE_ACTION
   return 'toolResults';
 }
 
 /**
- * 根据 `messagePrompts` 条目的来源与内容特征将其归类到对话上下文的 5 个细分通道。
+ * `messagePrompts` 5 
  *
  * @param {object} m
  * @returns {'toolResults'|'checkpoint'|'subagent'|'assistant'|'userInput'}
@@ -274,20 +274,20 @@ function classifyMessagePrompt(m) {
 }
 
 /**
- * 从 `chatModel` 元数据中提取并拆解 10 大上下文 Token 构成分类：
- * - `systemPromptTokens`：核心系统提示词
- * - `userRulesTokens`：用户自定义全局/工作区规则
- * - `skillsTokens`：已注入的 Skills 指令说明
- * - `systemToolsTokens`：内置系统工具定义
- * - `mcpToolsTokens`：MCP 外部服务器工具与资源定义
- * - `checkpointTokens`：上下文压缩摘要（Checkpoint）
- * - `userInputTokens`：用户输入消息
- * - `assistantTokens`：主代理回复与思考
- * - `subagentTokens`：子代理汇报消息
- * - `toolResultsTokens`：工具执行返回结果
+ * `chatModel` 10 Token 
+ * - `systemPromptTokens` 
+ * - `userRulesTokens` / 
+ * - `skillsTokens` Skills 
+ * - `systemToolsTokens` 
+ * - `mcpToolsTokens` MCP 
+ * - `checkpointTokens` Checkpoint 
+ * - `userInputTokens` 
+ * - `assistantTokens` 
+ * - `subagentTokens` 
+ * - `toolResultsTokens` 
  *
- * @param {object} chat `generatorMetadata.chatModel` 对象
- * @returns {object | null} 上下文 Token 构成明细，无任何可用元数据时返回 null
+ * @param {object} chat `generatorMetadata.chatModel` 
+ * @returns {object | null} Token null
  */
 export function extractContextBreakdown(chat) {
   if (!chat || typeof chat !== 'object') {
@@ -327,7 +327,7 @@ export function extractContextBreakdown(chat) {
   let hasToolsGroup = false;
   let hasMessagesGroup = false;
 
-  // 第一阶段：从原生 tokenBreakdown.groups 树状结构中提取并拆分 10 大上下文分类
+  // tokenBreakdown.groups 10
   for (const g of groups) {
     const gType = String(g?.type || '').toUpperCase();
     const gName = String(g?.name || '').trim().toLowerCase();
@@ -492,7 +492,7 @@ export function extractContextBreakdown(chat) {
         userInputTokens += gTokens;
       }
     } else if (gTokens > 0) {
-      // 兜底接收未来新增的顶层提示词分组，确保 tokenBreakdown.groups 不丢任何分组
+      // tokenBreakdown.groups
       hasPromptGroup = true;
       const fallbackBucket = classifyPromptSection(g?.name, g?.type);
       if (fallbackBucket === 'skills') {
@@ -507,7 +507,7 @@ export function extractContextBreakdown(chat) {
     }
   }
 
-  // 第二阶段（A）：当 groups 缺失系统提示词分组时，回退到 promptSections 按显式 token 或 UTF-8 字节数（byteLength / 3）估算
+  // A groups promptSections token UTF-8 byteLength / 3
   if (!hasPromptGroup && promptSections.length > 0) {
     for (const s of promptSections) {
       const tok =
@@ -527,7 +527,7 @@ export function extractContextBreakdown(chat) {
     }
   }
 
-  // 第二阶段（B）：当 groups 缺失工具分组时，回退到 tools 列表拼接名称、描述与 JSON Schema 估算
+  // B groups tools JSON Schema
   if (!hasToolsGroup && tools.length > 0) {
     for (const t of tools) {
       const rawText = `${t?.name || ''}${t?.description || ''}${t?.jsonSchemaString || ''}`;
@@ -543,7 +543,7 @@ export function extractContextBreakdown(chat) {
     }
   }
 
-  // 第二阶段（C）：当 groups 缺失对话消息分组时，回退到 messagePrompts 列表按来源与内容特征分类估算
+  // C groups messagePrompts
   if (!hasMessagesGroup && messagePrompts.length > 0) {
     for (const m of messagePrompts) {
       const text = String(m?.prompt ?? m?.content ?? '');
@@ -598,32 +598,32 @@ export function extractContextBreakdown(chat) {
 }
 
 /**
- * 从原始轨迹步骤数组与生成器元数据中提取标准化模型步骤指标。
+ * 
  *
- * 核心处理流程说明：
- * 1. **模型身份 5 级证据链优先级（由高到低）**：
- *    依次检查本请求自身的 5 个字段来源，取首个非空且非占位符（排除 `0`、`unknown`、`MODEL_UNSPECIFIED`、`MODEL_UNKNOWN`）的值：
- *    - 优先级 1：`usage.model`（步骤内 `modelUsage` 或 `retryInfos[0].usage` 记录的模型标识）
- *    - 优先级 2：`chat.usage.model`（关联 `generatorMetadata.chatModel.usage` 记录的模型标识）
- *    - 优先级 3：`chat.model`（`chatModel` 请求级模型标识）
- *    - 优先级 4：`metadata.generatorModel`（步骤 `metadata` 顶层记录的生成模型）
- *    - 优先级 5：`chat.responseModel`（上游返回的具体响应模型名）
- * 2. **测速过滤与排除原因（`timingReason` / `speedReason`）**：
- *    - `'canceled'`：生成已取消，保留用量但不参与测速；
- *    - `'incomplete_or_invalid_timing'`：没有完成生成的证据，或总耗时 `totalDurationSec` 缺失/非正数；
- *    - `'invalid_output_tokens'`：`outputTokens` 不是合法的非负安全整数；
- *    - `'short_timing'`：请求总耗时低于 `MIN_SPEED_DURATION_SECONDS`（0.5s），易受计时器粒度噪声干扰；
- *    - `'inconsistent_timing'`：原生首字延迟 `nativeTtftSec` 大于请求总耗时 `totalDurationSec + 0.01s`（时钟或元数据自相矛盾）；
- *    - `'compaction'` / `'short_sample'`：单步吞吐率可计算，但属于上下文压缩检查点步骤（`CORTEX_STEP_TYPE_CHECKPOINT`）
- *      或输出不足 `MIN_MEAN_OUTPUT_TOKENS`（50 Tokens），因此从平均速度样本（`speedSampleEligible`）中剔除。
- * 3. **末尾步骤上下文回填逻辑**：
- *    若轨迹最后一个模型步骤本身未携带 `contextBreakdown`（例如末尾步骤为轻量更新或缺少内联 `chatModel`），
- *    但整条轨迹的 `generatorMetadata` 中存在最近的 `latestBreakdownChat`，则将该上下文构成与最大预算回填至末尾步骤，
- *    确保面板展示的当前会话上下文水位不丢失。
+ * 
+ * 1. ** 5 ** 
+ * 5 `0` `unknown` `MODEL_UNSPECIFIED` `MODEL_UNKNOWN` 
+ * - 1 `usage.model` `modelUsage` `retryInfos[0].usage` 
+ * - 2 `chat.usage.model` `generatorMetadata.chatModel.usage` 
+ * - 3 `chat.model` `chatModel` 
+ * - 4 `metadata.generatorModel` `metadata` 
+ * - 5 `chat.responseModel` 
+ * 2. ** `timingReason` / `speedReason` ** 
+ * - `'canceled'` 
+ * - `'incomplete_or_invalid_timing'` `totalDurationSec` / 
+ * - `'invalid_output_tokens'` `outputTokens` 
+ * - `'short_timing'` `MIN_SPEED_DURATION_SECONDS` 0.5s 
+ * - `'inconsistent_timing'` `nativeTtftSec` `totalDurationSec + 0.01s` 
+ * - `'compaction'` / `'short_sample'` `CORTEX_STEP_TYPE_CHECKPOINT` 
+ * `MIN_MEAN_OUTPUT_TOKENS` 50 Tokens `speedSampleEligible` 
+ * 3. ** ** 
+ * `contextBreakdown` `chatModel` 
+ * `generatorMetadata` `latestBreakdownChat` 
+ * 
  *
- * @param {Array<object>} [rawSteps=[]] 原始 Cortex 步骤数组
- * @param {Array<object>} [generatorMetadata=[]] 轨迹级生成器元数据列表
- * @returns {Array<object>} 标准化并完成压缩步骤模型推断的步骤指标列表
+ * @param {Array<object>} [rawSteps=[]] Cortex 
+ * @param {Array<object>} [generatorMetadata=[]] 
+ * @returns {Array<object>} 
  */
 export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
   const genByStep = new Map();
@@ -667,7 +667,6 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
   let turnCounter = 0;
   let activeTurnIndex = null;
   let pendingTurnPrompts = [];
-  let pendingTurnHasMedia = false;
   let hasUnconsumedTurn = false;
 
   const isUserTurnBoundary = (step) => {
@@ -679,7 +678,7 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
     return Boolean(step.userInput && typeof step.userInput === 'object');
   };
 
-  const extractUserTurnInfo = (step) => {
+  const extractUserTurnPrompt = (step) => {
     const ui = step?.userInput;
     let raw = '';
     if (typeof ui?.userResponse === 'string' && ui.userResponse.trim()) {
@@ -710,35 +709,24 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
         ? step.media
         : [];
     const hasMedia = mediaArr.length > 0;
-    const cleanText = cleaned.length > 180 ? `${cleaned.slice(0, 179)}…` : cleaned;
-    const legacyRaw = !cleaned ? (hasMedia ? '[图片/附件提问]' : '') : hasMedia ? `${cleaned} [附图]` : cleaned;
-    const legacyPrompt = legacyRaw.length > 180 ? `${legacyRaw.slice(0, 179)}…` : legacyRaw;
-    return { cleanText, legacyPrompt, hasMedia };
+    if (!cleaned) {
+      return hasMedia ? '[Media/Attachment]' : '';
+    }
+    const withMedia = hasMedia ? `${cleaned} [Attachment]` : cleaned;
+    return withMedia.length > 180 ? `${withMedia.slice(0, 179)}…` : withMedia;
   };
 
-  let pendingTurnCleanPrompts = [];
   rawSteps.forEach((s, index) => {
     if (isUserTurnBoundary(s)) {
-      const { cleanText, legacyPrompt, hasMedia } = extractUserTurnInfo(s);
+      const promptText = extractUserTurnPrompt(s);
       if (!hasUnconsumedTurn) {
         hasUnconsumedTurn = true;
-        pendingTurnPrompts = legacyPrompt ? [legacyPrompt] : [];
-        pendingTurnCleanPrompts = cleanText ? [cleanText] : [];
-        pendingTurnHasMedia = hasMedia;
-      } else {
-        if (
-          legacyPrompt &&
-          pendingTurnPrompts[pendingTurnPrompts.length - 1] !== legacyPrompt
-        ) {
-          pendingTurnPrompts.push(legacyPrompt);
-        }
-        if (
-          cleanText &&
-          pendingTurnCleanPrompts[pendingTurnCleanPrompts.length - 1] !== cleanText
-        ) {
-          pendingTurnCleanPrompts.push(cleanText);
-        }
-        if (hasMedia) pendingTurnHasMedia = true;
+        pendingTurnPrompts = promptText ? [promptText] : [];
+      } else if (
+        promptText &&
+        pendingTurnPrompts[pendingTurnPrompts.length - 1] !== promptText
+      ) {
+        pendingTurnPrompts.push(promptText);
       }
     }
 
@@ -750,25 +738,15 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
 
     let stepIsTurnStart = false;
     let stepTurnPrompt = '';
-    let stepTurnPromptClean = '';
-    let stepTurnHasMedia = false;
-    let stepTurnMediaOnly = false;
     if (hasUnconsumedTurn) {
       turnCounter += 1;
       activeTurnIndex = turnCounter;
       stepIsTurnStart = true;
       const joinedPrompt = pendingTurnPrompts.join('\n').trim();
-      const joinedClean = pendingTurnCleanPrompts.join('\n').trim();
       stepTurnPrompt =
         joinedPrompt.length > 180 ? `${joinedPrompt.slice(0, 179)}…` : joinedPrompt;
-      stepTurnPromptClean =
-        joinedClean.length > 180 ? `${joinedClean.slice(0, 179)}…` : joinedClean;
-      stepTurnHasMedia = pendingTurnHasMedia;
-      stepTurnMediaOnly = Boolean(pendingTurnHasMedia && !stepTurnPromptClean);
       hasUnconsumedTurn = false;
       pendingTurnPrompts = [];
-      pendingTurnCleanPrompts = [];
-      pendingTurnHasMedia = false;
     }
 
     const stepIndex = m.sourceTrajectoryStepInfo?.stepIndex ?? index;
@@ -811,7 +789,7 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
         : Math.max(0, outputTokens - thinkingTokens);
 
     const start = parseIsoMs(m.createdAt);
-    // 轨迹清理可把已生成的步骤改为 CLEARED；仍需原始生成结束时间，避免将清理时间计入测速。
+    // CLEARED
     const isCleared = s.status === 'CORTEX_STEP_STATUS_CLEARED';
     const measuredDuration = requestDuration(
       m.createdAt,
@@ -824,12 +802,12 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
     const totalDurationSec = complete ? measuredDuration : null;
     const nativeTtftSec = duration(chat?.timeToFirstToken);
 
-    // 阶段计时器（streamingDuration / thinkingDuration）仅作诊断展示：
-    // 缓冲式工具调用会导致 streamingDuration 极小，因此绝不能将其作为速度分母或从总耗时中扣除
+    // streamingDuration / thinkingDuration
+    // streamingDuration
     const nativeStreamSec = duration(chat?.streamingDuration);
     const thinkingDurationSec = duration(p.thinkingDuration);
 
-    // 先校验状态、耗时与 Token 合法性，再判定压缩步与短样本。
+    // Token
     let timingReason = null;
     if (s.status === 'CORTEX_STEP_STATUS_CANCELED') {
       timingReason = 'canceled';
@@ -861,8 +839,8 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
     const context = chat?.chatStartMetadata?.contextWindowMetadata;
     const contextBreakdown = extractContextBreakdown(chat);
 
-    // 模型身份 5 级证据链优先级：仅采信当前请求自身的显式字段；
-    // 若 Checkpoint 压缩步骤缺失模型字段，稍后由 inferCompactionStepModels 从同轨迹邻居步骤回退推断
+    
+    // Checkpoint inferCompactionStepModels
     const isValidModelValue = (value) =>
       typeof value === 'string' &&
       value.trim() &&
@@ -939,12 +917,10 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
       turnIndex: activeTurnIndex,
       isTurnStart: stepIsTurnStart,
       ...(stepIsTurnStart && stepTurnPrompt ? { turnPrompt: stepTurnPrompt } : {}),
-      ...(stepIsTurnStart && stepTurnPromptClean ? { turnPromptClean: stepTurnPromptClean } : {}),
-      ...(stepIsTurnStart ? { turnHasMedia: stepTurnHasMedia, turnMediaOnly: stepTurnMediaOnly } : {}),
     });
   });
 
-  // 末尾步骤上下文回填：若最后一个非压缩步骤缺少 contextBreakdown，且最近一次有效的 generatorMetadata 未跨过压缩边界，则补齐
+  // contextBreakdown generatorMetadata
   if (
     result.length > 0 &&
     !result[result.length - 1].isCompactionStep &&
@@ -971,18 +947,18 @@ export function extractModelSteps(rawSteps = [], generatorMetadata = []) {
 }
 
 /**
- * 为缺失显式模型标识的上下文压缩步骤（`isCompactionStep`）推断归属模型。
+ * `isCompactionStep` 
  *
- * 4 轮前后向邻居回退推断规则（仅选取拥有真实显式模型身份 `isExplicitDonor` 的步骤作为捐赠者）：
- * - **第 1 轮（前向同 Provider 优先）**：从当前位置向前（`idx - 1 -> 0`）查找首个 `apiProvider` 兼容的显式模型步骤；
- * - **第 2 轮（后向同 Provider 次之）**：若前向未找到，从当前位置向后（`idx + 1 -> steps.length - 1`）查找首个 `apiProvider` 兼容的显式模型步骤；
- * - **第 3 轮（前向任意显式模型回退）**：若仍未找到，忽略 Provider 限制，向前查找最近的任意显式模型步骤；
- * - **第 4 轮（后向任意显式模型兜底）**：最后向后查找最近的任意显式模型步骤。
+ * 4 `isExplicitDonor` 
+ * - ** 1 Provider ** `idx - 1 -> 0` `apiProvider` 
+ * - ** 2 Provider ** `idx + 1 -> steps.length - 1` `apiProvider` 
+ * - ** 3 ** Provider 
+ * - ** 4 ** 
  *
- * 命中后将 `modelKey` 补齐并将 `modelSource` 标记为 `'inferred_compaction'`，同时补齐同模型的 `responseModel` 与 `modelDisplayName`。
+ * `modelKey` `modelSource` `'inferred_compaction'` `responseModel` `modelDisplayName` 
  *
- * @param {Array<object>} steps 已提取的步骤列表
- * @returns {Array<object>} 补齐压缩步骤模型归属后的步骤列表
+ * @param {Array<object>} steps 
+ * @returns {Array<object>} 
  */
 export function inferCompactionStepModels(steps) {
   if (!Array.isArray(steps) || steps.length < 2) {
@@ -1024,14 +1000,14 @@ export function inferCompactionStepModels(steps) {
 
     let donor = null;
 
-    // 第 1 轮：前向查找同 API Provider 的最近显式模型步骤
+    // 1 API Provider
     for (let j = idx - 1; j >= 0; j--) {
       if (canDonate(steps[j]) && isProviderCompatible(step, steps[j])) {
         donor = steps[j];
         break;
       }
     }
-    // 第 2 轮：后向查找同 API Provider 的最近显式模型步骤
+    // 2 API Provider
     if (!donor) {
       for (let j = idx + 1; j < steps.length; j++) {
         if (canDonate(steps[j]) && isProviderCompatible(step, steps[j])) {
@@ -1040,7 +1016,7 @@ export function inferCompactionStepModels(steps) {
         }
       }
     }
-    // 第 3 轮：前向查找任意最近显式模型步骤
+    
     if (!donor) {
       for (let j = idx - 1; j >= 0; j--) {
         if (canDonate(steps[j])) {
@@ -1049,7 +1025,7 @@ export function inferCompactionStepModels(steps) {
         }
       }
     }
-    // 第 4 轮：后向查找任意最近显式模型步骤
+    
     if (!donor) {
       for (let j = idx + 1; j < steps.length; j++) {
         if (canDonate(steps[j])) {
@@ -1070,17 +1046,12 @@ export function inferCompactionStepModels(steps) {
       step.responseModel || (donorSameModel ? donor.responseModel || '' : '');
     const nextDisplayName =
       step.modelDisplayName || (donorSameModel ? donor.modelDisplayName || '' : '');
-    const nextMaxBudget =
-      !step.reportedContextLimitTokens && donor.maxContextBudgetTokens > 0
-        ? donor.maxContextBudgetTokens
-        : step.maxContextBudgetTokens;
 
     if (
       nextModelKey === step.modelKey &&
       nextModelSource === step.modelSource &&
       nextResponseModel === (step.responseModel || '') &&
-      nextDisplayName === (step.modelDisplayName || '') &&
-      nextMaxBudget === step.maxContextBudgetTokens
+      nextDisplayName === (step.modelDisplayName || '')
     ) {
       return step;
     }
@@ -1091,25 +1062,24 @@ export function inferCompactionStepModels(steps) {
       modelSource: nextModelSource,
       responseModel: nextResponseModel,
       modelDisplayName: nextDisplayName,
-      maxContextBudgetTokens: nextMaxBudget,
     };
   });
 }
 
 /**
- * 规范化并迁移从磁盘缓存加载的历史步骤对象。
+ * 
  *
- * 迁移与歧义清理规则：
- * 1. **旧版 `v9` 缓存 `MODEL_PLACEHOLDER_M418` 歧义清理**：
- *    旧版 `v9` 缓存既把真实的 Argon 模型请求记为 `MODEL_PLACEHOLDER_M418`，又把缺失模型元数据的默认回退值硬编码为 `MODEL_PLACEHOLDER_M418`。
- *    在缺乏原始轨迹证据时两者无法区分，因此迁移时保留 Token 用量与时间信息，将 `MODEL_PLACEHOLDER_M418`（及空模型名）
- *    统一重置为 `modelKey: 'unknown'`、`modelSource: 'legacy_unverified'`，并把原值保存在 `legacyModelKey` 中，交由后续全量重载从原始轨迹恢复真实身份。
- * 2. **跨测量版本速度字段失效保护**：
- *    若缓存步骤的 `measurementVersion` 与当前 `MEASUREMENT_VERSION` 不一致，保留计费 Token 数据以防重载失败丢失账单，
- *    但将所有派生速度与阶段耗时字段清空并标记 `speedReason: 'legacy_cache'`，防止旧口径算出的失真速率混入当前统计。
+ * 
+ * 1. ** `v9` `MODEL_PLACEHOLDER_M418` ** 
+ * `v9` Argon `MODEL_PLACEHOLDER_M418` `MODEL_PLACEHOLDER_M418` 
+ * Token `MODEL_PLACEHOLDER_M418` 
+ * `modelKey: 'unknown'` `modelSource: 'legacy_unverified'` `legacyModelKey` 
+ * 2. ** ** 
+ * `measurementVersion` `MEASUREMENT_VERSION` Token 
+ * `speedReason: 'legacy_cache'` 
  *
- * @param {object} step 缓存中的步骤对象
- * @returns {object} 迁移并清洗后的步骤对象
+ * @param {object} step 
+ * @returns {object} 
  */
 export function normalizeCachedStep(step) {
   if (!step || typeof step !== 'object' || Array.isArray(step)) {
@@ -1198,9 +1168,9 @@ export function normalizeCachedStep(step) {
 }
 
 /**
- * 提取单个步骤的速度度量摘要及其是否具备纳入平均速度统计的资格。
+ * 
  *
- * @param {object} step 标准化步骤对象
+ * @param {object} step 
  * @returns {{ value: number | null, tokens: number, seconds: number, eligible: boolean, reason: string | null }}
  */
 export function speedMetric(step) {
@@ -1236,7 +1206,7 @@ export function speedMetric(step) {
 }
 
 /**
- * 创建用于聚合多步骤吞吐率的累加器初始状态。
+ * 
  *
  * @returns {{ tokens: number, seconds: number, sampleCount: number, excludedCount: number, excludedReasons: Record<string, number> }}
  */
@@ -1251,10 +1221,10 @@ export function createSpeedAccumulator() {
 }
 
 /**
- * 将单个步骤的速度指标累加到汇总累加器中（自动跳过上下文压缩步骤）。
+ * 
  *
- * @param {ReturnType<typeof createSpeedAccumulator>} acc 速度累加器
- * @param {object} step 标准化步骤对象
+ * @param {ReturnType<typeof createSpeedAccumulator>} acc 
+ * @param {object} step 
  */
 export function accumulateSpeed(acc, step) {
   if (step.isCompactionStep) {
@@ -1273,9 +1243,9 @@ export function accumulateSpeed(acc, step) {
 }
 
 /**
- * 完成速度累加并计算加权平均吞吐率（`总输出 Tokens / 总有效耗时秒数`）。
+ * ` Tokens / ` 
  *
- * @param {ReturnType<typeof createSpeedAccumulator>} acc 速度累加器
+ * @param {ReturnType<typeof createSpeedAccumulator>} acc 
  * @returns {ReturnType<typeof createSpeedAccumulator> & { avgTokPerSec: number | null }}
  */
 export function finishSpeed(acc) {
@@ -1286,9 +1256,9 @@ export function finishSpeed(acc) {
 }
 
 /**
- * 一次性汇总一组步骤的整体吞吐率指标。
+ * 
  *
- * @param {Array<object>} steps 步骤列表
+ * @param {Array<object>} steps 
  * @returns {ReturnType<typeof finishSpeed>}
  */
 export function summarizeSpeed(steps) {
@@ -1300,10 +1270,10 @@ export function summarizeSpeed(steps) {
 }
 
 /**
- * 汇总一组步骤的平均原生首字延迟（TTFT）。
- * 仅纳入非压缩、当前测量版本、已完成且 `0 <= nativeTtftSec <= totalDurationSec + 0.01` 的有效样本。
+ * TTFT 
+ * `0 <= nativeTtftSec <= totalDurationSec + 0.01` 
  *
- * @param {Array<object>} steps 步骤列表
+ * @param {Array<object>} steps 
  * @returns {{ sampleCount: number, avgSec: number | null }}
  */
 export function summarizeTtft(steps) {
@@ -1330,7 +1300,7 @@ export function summarizeTtft(steps) {
   };
 }
 
-/** 标志着原始轨迹步骤已进入终态的状态枚举集合（兼容 Connect RPC 与 transcript.jsonl） */
+/** Connect RPC transcript.jsonl */
 const LIVE_TERMINAL_STATUSES = new Set([
   'CORTEX_STEP_STATUS_DONE',
   'CORTEX_STEP_STATUS_CLEARED',
@@ -1345,7 +1315,7 @@ const LIVE_TERMINAL_STATUSES = new Set([
 ]);
 
 /**
- * 判断原始步骤状态是否属于等待人工确认或审批状态。
+ * 
  *
  * @param {unknown} status
  * @returns {boolean}
@@ -1361,7 +1331,7 @@ function isWaitingStepStatus(status) {
 }
 
 /**
- * 判断单个原始轨迹步骤是否已执行完毕。
+ * 
  *
  * @param {object} step
  * @returns {boolean}
@@ -1420,7 +1390,7 @@ function getStepStableId(step, fallbackIdx) {
 }
 
 /**
- * 反转义 `transcript.jsonl` 或工具参数中可能被二次 JSON 序列化的字段值。
+ * `transcript.jsonl` JSON 
  *
  * @param {unknown} val
  * @returns {unknown}
@@ -1436,7 +1406,7 @@ function unwrapArgValue(val) {
     try {
       return JSON.parse(trimmed);
     } catch {
-      // 半流式或非标准 JSON 回退至正则反转义
+      // JSON
     }
   }
   return trimmed
@@ -1455,7 +1425,7 @@ function unwrapArgString(val) {
 }
 
 /**
- * 截取路径末尾的文件或目录基名（兼容 Windows 反斜杠、`file://` URI 及二次转义字符串）。
+ * Windows `file://` URI 
  *
  * @param {unknown} rawPath
  * @returns {string}
@@ -1468,7 +1438,7 @@ function shortBasename(rawPath) {
       cleaned = decodeURIComponent(cleaned);
     }
   } catch {
-    // 忽略 URI 解码异常
+ // URI 
   }
   cleaned = cleaned.replace(/[\\/]+$/, '');
   const parts = cleaned.split(/[\\/]/);
@@ -1476,7 +1446,7 @@ function shortBasename(rawPath) {
 }
 
 /**
- * 将多行或含 Markdown 标记的文本清洗为紧凑的单行预览摘要。
+ * Markdown 
  *
  * @param {unknown} rawText
  * @param {number} [maxLen=52]
@@ -1501,7 +1471,7 @@ function cleanSingleLineSnippet(rawText, maxLen = 52, takeLastLine = false) {
 }
 
 /**
- * 从可能尚未流式接收完毕的半截 JSON 字符串中按字段名提取字符串值。
+ * JSON 
  *
  * @param {string} rawJson
  * @param {string[]} keys
@@ -1579,7 +1549,7 @@ function isAuxiliaryMetaStep(step) {
 }
 
 /**
- * 解析工具调用对象或半流式 JSON 参数，返回适合界面单行展示的中文动作标签与详情描述。
+ * JSON 
  *
  * @param {object|null|undefined} rawToolCall
  * @param {object|null|undefined} [fallbackStep=null]
@@ -1621,11 +1591,7 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
       rawName = 'edit_file';
     } else if (stepType.includes('GREP_SEARCH') || fallbackStep?.grepSearch) {
       rawName = 'grep_search';
-    } else if (
-      stepType.includes('FIND_BY_NAME') ||
-      stepType === 'CORTEX_STEP_TYPE_FIND' ||
-      fallbackStep?.findByName
-    ) {
+    } else if (stepType.includes('FIND_BY_NAME') || fallbackStep?.findByName) {
       rawName = 'find_by_name';
     } else if (stepType.includes('SEARCH_WEB') || fallbackStep?.searchWeb) {
       rawName = 'search_web';
@@ -1651,7 +1617,7 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
       const parsed = JSON.parse(rawArgsStr);
       if (parsed && typeof parsed === 'object') args = parsed;
     } catch {
-      // 半流式 JSON 尚未闭合，后续通过正则提取关键字段
+ // JSON 
     }
   }
 
@@ -1702,9 +1668,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
         : summary || cmdSnippet || '';
     return {
       toolName: nameLower,
-      actionKey: 'run_command',
       isAskUser: false,
-      label: '执行命令',
+      label: 'Running command',
       detail,
     };
   }
@@ -1729,9 +1694,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
           : '';
     return {
       toolName: nameLower,
-      actionKey: 'read_file',
       isAskUser: false,
-      label: '读取文件',
+      label: 'Reading file',
       detail: file ? `${file}${rangeSuffix}` : '',
     };
   }
@@ -1747,9 +1711,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     );
     return {
       toolName: nameLower,
-      actionKey: 'edit_file',
       isAskUser: false,
-      label: '修改文件',
+      label: 'Editing file',
       detail: file || '',
     };
   }
@@ -1760,9 +1723,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     );
     return {
       toolName: nameLower,
-      actionKey: 'write_file',
       isAskUser: false,
-      label: '写入文件',
+      label: 'Writing file',
       detail: file || '',
     };
   }
@@ -1776,9 +1738,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
         : cleanSingleLineSnippet(query, 48) || searchPath || '';
     return {
       toolName: nameLower,
-      actionKey: 'grep_search',
       isAskUser: false,
-      label: '搜索代码',
+      label: 'Searching code',
       detail,
     };
   }
@@ -1788,9 +1749,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const dir = shortBasename(pickField(['SearchDirectory', 'DirectoryPath', 'Path']));
     return {
       toolName: nameLower,
-      actionKey: 'find_file',
       isAskUser: false,
-      label: '查找文件',
+      label: 'Finding files',
       detail: pattern && dir ? `${pattern} (${dir})` : pattern || dir || '',
     };
   }
@@ -1800,9 +1760,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const target = pickField(['query', 'Query', 'Url', 'url']);
     return {
       toolName: nameLower,
-      actionKey: isUrl ? 'read_url' : 'search_web',
       isAskUser: false,
-      label: isUrl ? '读取网页' : '网页搜索',
+      label: isUrl ? 'Reading webpage' : 'Searching web',
       detail: cleanSingleLineSnippet(target, 52) || '',
     };
   }
@@ -1816,9 +1775,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
       String(subSpec.typeName || '').trim();
     return {
       toolName: nameLower,
-      actionKey: 'invoke_subagent',
       isAskUser: false,
-      label: '调用子代理',
+      label: 'Invoking subagent',
       detail: role || '',
     };
   }
@@ -1827,9 +1785,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const recipient = pickField(['Recipient', 'recipient']);
     return {
       toolName: nameLower,
-      actionKey: 'send_message',
       isAskUser: false,
-      label: '通信子代理',
+      label: 'Messaging subagent',
       detail: recipient ? recipient.slice(0, 8) : '',
     };
   }
@@ -1838,9 +1795,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const subName = pickField(['Name', 'Action', 'action']);
     return {
       toolName: nameLower,
-      actionKey: 'manage_subagents',
       isAskUser: false,
-      label: '管理子代理',
+      label: 'Managing subagents',
       detail: subName || '',
     };
   }
@@ -1850,9 +1806,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const taskId = pickField(['TaskId', 'taskId']);
     return {
       toolName: nameLower,
-      actionKey: 'manage_task',
       isAskUser: false,
-      label: '后台任务',
+      label: 'Background task',
       detail: taskId ? `${action || 'status'} (${taskId})` : action || '',
     };
   }
@@ -1862,9 +1817,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const cron = pickField(['CronExpression']);
     return {
       toolName: nameLower,
-      actionKey: 'schedule',
       isAskUser: false,
-      label: '定时任务',
+      label: 'Scheduled task',
       detail: dur ? `${dur}s` : cron || '',
     };
   }
@@ -1879,9 +1833,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
       );
     return {
       toolName: nameLower,
-      actionKey: 'ask_question',
       isAskUser: true,
-      label: '等待用户选择',
+      label: 'Waiting for user choice',
       detail: cleanSingleLineSnippet(qText, 50) || '',
     };
   }
@@ -1891,9 +1844,8 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const q = Array.isArray(rawQueries) ? rawQueries.join(', ') : '';
     return {
       toolName: nameLower,
-      actionKey: 'search_marketplace',
       isAskUser: false,
-      label: '查询插件',
+      label: 'Searching marketplace',
       detail: cleanSingleLineSnippet(q, 48) || '',
     };
   }
@@ -1902,34 +1854,32 @@ export function summarizeToolCall(rawToolCall, fallbackStep = null) {
     const mcpClean = nameLower.replace(/^mcp[_-]/i, '').replace(/_/g, ' · ');
     return {
       toolName: nameLower,
-      actionKey: 'mcp_tool',
       isAskUser: false,
-      label: '调用 MCP',
+      label: 'Calling MCP tool',
       detail: mcpClean || '',
     };
   }
 
   return {
     toolName: nameLower || 'tool',
-    actionKey: 'tool_call',
     isAskUser: false,
-    label: '调用工具',
+    label: 'Running tool',
     detail: nameLower || '',
   };
 }
 
 /**
- * 从当前正在运行的会话原始步骤数组 (`rawSteps`，兼容 `GetCascadeTrajectory` 与 `transcript.jsonl`) 中提取模型实时动作摘要。
+ * (`rawSteps` `GetCascadeTrajectory` `transcript.jsonl`) 
  *
- * 状态判定覆盖完整 Agent 循环：
- * 1. 轨迹为空或刚创建：显示“准备推理”；
- * 2. 末尾步骤未完成 (`!isRawStepComplete(lastStep)`)：
- *    - 若为 `CHECKPOINT`：显示“上下文压缩”；
- *    - 若为 `PLANNER_RESPONSE`：按 `toolCalls -> response -> thinking -> 首字等待` 优先级提取当前流式动作；
- *    - 若为工具执行步骤：结合 `status` 判定是否处于“等待确认”，并回溯最近一次 `PLANNER_RESPONSE` 匹配对应的工具名与 `[m/n]` 批次进度；
- * 3. 末尾步骤已完成 (`DONE`) 但会话仍处于 `RUNNING`：
- *    - 若最近一次 `PLANNER_RESPONSE` 声明了 `N` 个工具调用，而其后仅有 `M < N` 个完成步骤，则判定第 `M + 1` 个工具正在执行中；
- *    - 若 `M >= N`（全部工具已返回结果）或末尾为 `USER_INPUT`，则判定模型正在汇总工具结果并准备下一轮推理。
+ * Agent 
+ * 1. “ ” 
+ * 2. (`!isRawStepComplete(lastStep)`) 
+ * - `CHECKPOINT` “ ” 
+ * - `PLANNER_RESPONSE` `toolCalls -> response -> thinking -> ` 
+ * - `status` “ ” `PLANNER_RESPONSE` `[m/n]` 
+ * 3. (`DONE`) `RUNNING` 
+ * - `PLANNER_RESPONSE` `N` `M < N` `M + 1` 
+ * - `M >= N` `USER_INPUT` 
  *
  * @param {Array<object>} [rawSteps=[]]
  * @param {boolean} [isRunning=false]
@@ -1959,10 +1909,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
     const startMs = Math.floor(fallbackStartMs || 0);
     return {
       phase: 'thinking',
-      actionKey: 'thinking',
-      waitingApproval: false,
-      detailKey: '',
-      label: '推理中',
+      label: 'Thinking',
       detail: '',
       stepProgress: '',
       startedAtMs: startMs,
@@ -1990,7 +1937,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
     if (lastPlannerIdx !== -1 && lastUserIdx !== -1 && lastCheckpointIdx !== -1) break;
   }
 
-  // 忽略末尾已完成的辅助元数据步骤（如 MEMENTO / EPHEMERAL_MESSAGE），避免掩盖正在运行或刚完成的压缩/工具步骤
+ // MEMENTO / EPHEMERAL_MESSAGE / 
   let lastIdx = rawSteps.length - 1;
   while (lastIdx > 0 && isAuxiliaryMetaStep(rawSteps[lastIdx]) && isRawStepComplete(rawSteps[lastIdx])) {
     lastIdx--;
@@ -1999,7 +1946,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
   const lastStepId = getStepStableId(lastStep, lastIdx);
   const lastComplete = isRawStepComplete(lastStep);
 
-  // 情况 A：最后一个有效步骤本身尚未完成（正在流式生成、正在上下文压缩或正在执行工具）
+ // A 
   if (!lastComplete) {
     const prevStepEndMs =
       lastIdx > 0
@@ -2011,10 +1958,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
     if (isCheckpointStep(lastStep)) {
       return {
         phase: 'compacting',
-        actionKey: 'compacting',
-        waitingApproval: false,
-        detailKey: '',
-        label: '上下文压缩',
+        label: 'Compacting context',
         detail: '',
         stepProgress: '',
         startedAtMs: startMs,
@@ -2035,15 +1979,11 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
         const phase = info.isAskUser ? 'waiting' : 'tool';
         return {
           phase,
-          toolName: info.toolName,
-          actionKey: info.actionKey,
-          waitingApproval: false,
-          detailKey: '',
           label: info.label,
           detail: info.detail,
           stepProgress,
           startedAtMs: startMs,
-          signature: `planner-tool:${lastStepId}:${tools.length}:${info.actionKey}:${info.detail}`,
+          signature: `planner-tool:${lastStepId}:${tools.length}:${info.label}:${info.detail}`,
         };
       }
 
@@ -2051,10 +1991,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
         const snippet = cleanSingleLineSnippet(respText, 52, true);
         return {
           phase: 'responding',
-          actionKey: 'responding',
-          waitingApproval: false,
-          detailKey: '',
-          label: '正在输出回复',
+          label: 'Responding',
           detail: snippet,
           stepProgress: '',
           startedAtMs: startMs,
@@ -2066,10 +2003,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
         const snippet = cleanSingleLineSnippet(thinkText, 52, true);
         return {
           phase: 'thinking',
-          actionKey: 'thinking',
-          waitingApproval: false,
-          detailKey: '',
-          label: '推理中',
+          label: 'Thinking',
           detail: snippet,
           stepProgress: '',
           startedAtMs: startMs,
@@ -2079,10 +2013,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
 
       return {
         phase: 'thinking',
-        actionKey: 'thinking',
-        waitingApproval: false,
-        detailKey: '',
-        label: '推理中',
+        label: 'Thinking',
         detail: '',
         stepProgress: '',
         startedAtMs: startMs,
@@ -2090,7 +2021,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
       };
     }
 
-    // 末尾是未完成的工具执行步骤（仅关联压缩边界之后的最近一轮 PLANNER_RESPONSE）
+ // PLANNER_RESPONSE 
     let matchedPlannerTool = null;
     let stepProgress = '';
     if (lastPlannerIdx >= 0 && lastPlannerIdx > lastUserIdx && lastPlannerIdx > lastCheckpointIdx) {
@@ -2116,26 +2047,21 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
       stepProgress = '';
     }
     const waiting = isWaitingStepStatus(lastStep?.status) || info.isAskUser;
-    const waitingApproval = Boolean(waiting && !info.isAskUser);
     const resolvedStartMs = startMs || prevStepEndMs || 0;
-    const label = waitingApproval ? `等待确认 · ${info.label}` : info.label;
+    const label = waiting && !info.isAskUser ? `Waiting approval · ${info.label}` : info.label;
 
     return {
       phase: waiting ? 'waiting' : 'tool',
-      toolName: info.toolName,
-      actionKey: info.actionKey,
-      waitingApproval,
-      detailKey: '',
       label,
       detail: info.detail,
       stepProgress,
       startedAtMs: resolvedStartMs,
-      signature: `step-run:${lastStepId}:${waiting}:${info.actionKey}:${stepProgress}:${info.detail}`,
+      signature: `step-run:${lastStepId}:${waiting}:${label}:${stepProgress}:${info.detail}`,
     };
   }
 
-  // 情况 A2：最新关键里程碑是已完成态 (DONE) 的上下文压缩步骤（如 transcript.jsonl 写入的 CHECKPOINT
-  // 或 RPC 压缩刚完成正组装压缩后上下文准备下一轮推理），严禁穿透回溯到压缩前的旧工具操作
+ // A2 (DONE) transcript.jsonl CHECKPOINT
+ // RPC 
   if (lastCheckpointIdx >= 0 && lastCheckpointIdx > lastPlannerIdx && lastCheckpointIdx > lastUserIdx) {
     let hasPostCheckpointToolStep = false;
     for (let k = lastCheckpointIdx + 1; k <= lastIdx; k++) {
@@ -2166,11 +2092,8 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
         Math.floor(fallbackStartMs || 0);
       return {
         phase: 'compacting',
-        actionKey: 'compacting',
-        waitingApproval: false,
-        detailKey: cpFinishMs > 0 ? 'compaction_resuming' : '',
-        label: '上下文压缩',
-        detail: cpFinishMs > 0 ? '已完成压缩，正在恢复推理' : '',
+        label: 'Compacting context',
+        detail: cpFinishMs > 0 ? 'Compaction done, resuming' : '',
         stepProgress: '',
         startedAtMs: cpStartMs,
         signature: cpFinishMs > 0 ? `compacting-done:${cpStepId}` : `compacting:${cpStepId}`,
@@ -2178,7 +2101,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
     }
   }
 
-  // 情况 B：末尾步骤已是完成态 (DONE)，但整个会话仍处于 RUNNING 状态（仅在压缩边界之后匹配上一轮 PLANNER_RESPONSE）
+ // B (DONE) RUNNING PLANNER_RESPONSE 
   if (lastPlannerIdx >= 0 && lastPlannerIdx > lastUserIdx && lastPlannerIdx > lastCheckpointIdx) {
     const plannerStep = rawSteps[lastPlannerIdx];
     const plannerStepId = getStepStableId(plannerStep, lastPlannerIdx);
@@ -2192,7 +2115,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
     }
     const completedAfterPlanner = toolStepsAfterPlanner.length;
 
-    // B1：上一轮 PLANNER_RESPONSE 发出的 N 个工具调用尚有未落盘完成的项 (completedAfterPlanner < N)
+ // B1 PLANNER_RESPONSE N (completedAfterPlanner < N)
     if (pTools.length > 0 && completedAfterPlanner < pTools.length) {
       const currentTool = pTools[completedAfterPlanner];
       const info = summarizeToolCall(currentTool, null);
@@ -2200,7 +2123,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
         pTools.length > 1 && !hasBracketPrefix(info.detail)
           ? `${completedAfterPlanner + 1}/${pTools.length}`
           : '';
-      // 优先采用上一已完成步骤的真实完成时刻，若为 transcript.jsonl 无完成时间戳则回退至步骤创建时刻
+ // transcript.jsonl 
       const startMs =
         getRawStepFinishMs(lastStep) ||
         getRawStepFinishMs(plannerStep) ||
@@ -2211,25 +2134,21 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
 
       return {
         phase,
-        toolName: info.toolName,
-        actionKey: info.actionKey,
-        waitingApproval: false,
-        detailKey: '',
         label: info.label,
         detail: info.detail,
         stepProgress,
         startedAtMs: startMs,
-        signature: `pending-tool:${plannerStepId}:${completedAfterPlanner}:${info.actionKey}:${stepProgress}:${info.detail}`,
+        signature: `pending-tool:${plannerStepId}:${completedAfterPlanner}:${info.label}:${stepProgress}:${info.detail}`,
       };
     }
 
-    // B2：上一轮发出的工具已全部执行完毕，按各自对应的工具完成步骤提取目标文件/命令
+ // B2 / 
     if (pTools.length > 0 && completedAfterPlanner >= pTools.length) {
       const infos = pTools.map((t, idx) =>
         summarizeToolCall(t, toolStepsAfterPlanner[idx] || lastStep)
       );
       const lastToolInfo = infos[infos.length - 1];
-      const allSameLabel = infos.every((x) => x.actionKey === lastToolInfo.actionKey);
+      const allSameLabel = infos.every((x) => x.label === lastToolInfo.label);
       const detailsList = infos.map((x) => x.detail).filter(Boolean);
       const combinedDetail =
         infos.length > 1 && allSameLabel
@@ -2242,19 +2161,15 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
       const startMs = getRawStepFinishMs(lastStep) || getRawStepEndMs(lastStep) || 0;
       return {
         phase: 'thinking',
-        toolName: lastToolInfo.toolName,
-        actionKey: lastToolInfo.actionKey,
-        waitingApproval: false,
-        detailKey: '',
         label: lastToolInfo.label,
         detail: combinedDetail,
         stepProgress,
         startedAtMs: startMs,
-        signature: `post-tool-think:${lastStepId}:${lastToolInfo.actionKey}:${combinedDetail}`,
+        signature: `post-tool-think:${lastStepId}:${lastToolInfo.label}:${combinedDetail}`,
       };
     }
 
-    // B2.5：Connect RPC 轨迹中工具作为独立步骤存在（plannerResponse.toolCalls 为空）时，直接提取最后一个工具步骤的目标文件/命令
+ // B2.5 Connect RPC plannerResponse.toolCalls / 
     if (lastIdx > lastPlannerIdx) {
       const stepTypeUpper = String(lastStep?.type || '').toUpperCase();
       if (!stepTypeUpper.includes('USER_INPUT') && !stepTypeUpper.includes('GENERIC')) {
@@ -2263,21 +2178,17 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
           const startMs = getRawStepFinishMs(lastStep) || getRawStepEndMs(lastStep) || 0;
           return {
             phase: 'thinking',
-            toolName: lastInfo.toolName,
-            actionKey: lastInfo.actionKey,
-            waitingApproval: false,
-            detailKey: '',
             label: lastInfo.label,
             detail: lastInfo.detail,
             stepProgress: '',
             startedAtMs: startMs,
-            signature: `post-step-tool:${lastStepId}:${lastInfo.actionKey}:${lastInfo.detail}`,
+            signature: `post-step-tool:${lastStepId}:${lastInfo.label}:${lastInfo.detail}`,
           };
         }
       }
     }
 
-    // B3：末尾即为无工具调用的 PLANNER_RESPONSE（但会话仍处于 RUNNING），展示最新回复或思考摘要
+ // B3 PLANNER_RESPONSE RUNNING 
     if (lastPlannerIdx === lastIdx) {
       const respText = getStepResponseText(plannerStep);
       const thinkText = getStepThinkingText(plannerStep);
@@ -2287,10 +2198,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
         if (snippet) {
           return {
             phase: 'responding',
-            actionKey: 'responding',
-            waitingApproval: false,
-            detailKey: '',
-            label: '正在输出回复',
+            label: 'Responding',
             detail: snippet,
             stepProgress: '',
             startedAtMs: startMs,
@@ -2303,10 +2211,7 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
         if (snippet) {
           return {
             phase: 'thinking',
-            actionKey: 'thinking',
-            waitingApproval: false,
-            detailKey: '',
-            label: '推理中',
+            label: 'Thinking',
             detail: snippet,
             stepProgress: '',
             startedAtMs: startMs,
@@ -2317,14 +2222,11 @@ export function extractLiveActivity(rawSteps = [], isRunning = false, fallbackSt
     }
   }
 
-  // B4：末尾是 USER_INPUT 或普通完成步骤
+  // Last step is USER_INPUT or finished normal step
   const startMs = getRawStepFinishMs(lastStep) || getRawStepStartMs(lastStep) || 0;
   return {
     phase: 'thinking',
-    actionKey: 'thinking',
-    waitingApproval: false,
-    detailKey: '',
-    label: '推理中',
+    label: 'Thinking',
     detail: '',
     stepProgress: '',
     startedAtMs: startMs,

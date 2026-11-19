@@ -1,60 +1,31 @@
 /**
- * @fileoverview 模型价格与占位符目录加载、Schema 安全清洗及本地/云端目录合并。
+ * @fileoverview Schema / 
  *
- * 价格口径与安全原则：
- * - 所有单价单位均为 USD / 1M Tokens（`input`: 未命中缓存输入, `cache`: 缓存读取, `output`: 输出与思考）；
- * - 价格仅用于本地 API 等效成本折算，不代表订阅配额的扣减比例；
- * - 离线基准统一从随包发布的 `pricing-catalog.json` 读取，避免在 JS 源码中重复维护双份硬编码字典；
- * - 未收录或身份未知的模型严格保持未定价状态（`null`），绝不借用其他模型价格，也绝不允许 `null`/`0` 伪价格混入；
- * - 版本号（遵循 SemVer 2.0）与更新包 URL 均经过严格格式与可信 GitHub 域名白名单校验。
+ * 
+ * - USD / 1M Tokens `input`: , `cache`: , `output`: 
+ * - API 
+ * - `pricing-catalog.json` JS 
+ * - `null` `null`/`0` 
+ * - SemVer 2.0 URL GitHub 
  */
 
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { parseIsoMs } from '../trajectory-metrics.mjs';
 import {
-  DEFAULT_ARCHIVE_FALLBACK_URL,
-  DEFAULT_DOWNLOAD_URL,
-  DEFAULT_RELEASE_URL,
-  LEGACY_GITHUB_REPOS,
   LOCAL_CATALOG_FILE,
-  OFFICIAL_GITHUB_REPO,
   PLUGIN_MANIFEST_FILE,
-  PLUGIN_ROOT,
-  REMOTE_CATALOG_CACHE_FILE,
   cloudSyncState,
-  detectCustomGitForkRepo,
   loadJson,
   pluginUpdateState,
 } from './config.mjs';
 
 /**
- * 当前生效的模型价格表与占位符映射表（通过就地更新属性保持跨模块引用一致）。
+ * 
  */
 export const MODEL_PRICING = {};
 export const PLACEHOLDER_MAP = {};
 export let pricingCatalogRevision = 0;
-let pricingPhaseBoundariesMs = [];
 
 /**
- * 返回给定时刻已跨过的全局价格阶段边界计数，供遥测与聚合快照在跨越优惠截止时间点时自动失效重算。
- *
- * @param {number} [atMs=Date.now()]
- * @returns {number}
- */
-export function getPricingPhaseEpoch(atMs = Date.now()) {
-  const t = Number(atMs);
-  if (!Number.isFinite(t) || t <= 0 || pricingPhaseBoundariesMs.length === 0) return 0;
-  let epoch = 0;
-  for (let i = 0; i < pricingPhaseBoundariesMs.length; i++) {
-    if (t >= pricingPhaseBoundariesMs[i]) epoch = i + 1;
-    else break;
-  }
-  return epoch;
-}
-
-/**
- * 校验字符串是否为合法的 SemVer 2.0 语义化版本号格式（支持 `-prerelease` 与 `+build` 元数据）。
+ * SemVer 2.0 `-prerelease` `+build` 
  *
  * @param {*} v
  * @returns {boolean}
@@ -66,72 +37,12 @@ export function isValidSemver(v) {
   );
 }
 
-const OFFICIAL_REPO_PATH_PREFIX = `/${OFFICIAL_GITHUB_REPO.toLowerCase()}`;
-const LEGACY_REPO_PATH_PREFIXES = LEGACY_GITHUB_REPOS.map((repo) => `/${repo.toLowerCase()}`);
-
 /**
- * 判断来源 URL 是否属于已迁移的旧官方 GitHub 仓库地址。
- *
- * @param {*} rawUrl
- * @returns {boolean}
- */
-function isLegacyGithubRepoUrl(rawUrl) {
-  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return false;
-  try {
-    const parsed = new URL(rawUrl.trim());
-    const host = parsed.hostname.toLowerCase();
-    const pathname = parsed.pathname.toLowerCase();
-    if (
-      host !== 'github.com' &&
-      host !== 'raw.githubusercontent.com' &&
-      host !== 'codeload.github.com'
-    ) {
-      return false;
-    }
-    return LEGACY_REPO_PATH_PREFIXES.some(
-      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
- * 校验更新/下载链接是否属于可信的 GitHub 官方仓库与 HTTPS 域名白名单。
- *
- * @param {*} rawUrl
- * @param {string} fallbackUrl
- * @returns {string}
- */
-function sanitizeTrustedGithubUrl(rawUrl, fallbackUrl) {
-  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return fallbackUrl;
-  try {
-    const parsed = new URL(rawUrl.trim());
-    if (parsed.protocol !== 'https:') return fallbackUrl;
-    const host = parsed.hostname.toLowerCase();
-    const pathname = parsed.pathname.toLowerCase();
-    if (
-      host === 'github.com' ||
-      host === 'raw.githubusercontent.com' ||
-      host === 'codeload.github.com'
-    ) {
-      const hasRepoPrefix =
-        pathname === OFFICIAL_REPO_PATH_PREFIX ||
-        pathname.startsWith(`${OFFICIAL_REPO_PATH_PREFIX}/`);
-      return hasRepoPrefix ? parsed.toString() : fallbackUrl;
-    }
-    return fallbackUrl;
-  } catch {
-    return fallbackUrl;
-  }
-}
-
-/**
- * 按 SemVer 2.0 规范（§10 忽略 `+build` 元数据，§11.4 按 ASCII 码序与纯数字段逐级比较预发布标签）比较两个版本号。
+ * SemVer 2.0 §10 `+build` §11.4 ASCII 
  *
  * @param {string} a
  * @param {string} b
- * @returns {number} `1` 表示 `a > b`，`-1` 表示 `a < b`，`0` 表示相等
+ * @returns {number} `1` `a > b` `-1` `a < b` `0` 
  */
 export function compareSemver(a, b) {
   if (!isValidSemver(a) || !isValidSemver(b)) return 0;
@@ -177,10 +88,10 @@ export function compareSemver(a, b) {
       if (bigA !== bigB) return bigA > bigB ? 1 : -1;
       continue;
     }
-    // SemVer 2.0 §11.4.1：纯数字标识符的优先级始终低于含字母标识符
+    // SemVer 2.0 §11.4.1
     if (numA && !numB) return -1;
     if (!numA && numB) return 1;
-    // SemVer 2.0 §11.4.2：含字母标识符按 ASCII 字节序比较
+    // SemVer 2.0 §11.4.2 ASCII
     return idA < idB ? -1 : 1;
   }
   if (idsA.length === idsB.length) return 0;
@@ -188,7 +99,7 @@ export function compareSemver(a, b) {
 }
 
 /**
- * 读取当前已安装插件的 `plugin.json` 版本号。
+ * `plugin.json` 
  *
  * @returns {string}
  */
@@ -208,7 +119,13 @@ function normalizeModelFamily(rawFamily) {
   return f;
 }
 
-function isValidPricingRateTriplet(entry) {
+/**
+ * 
+ * - `input`/`cache`/`output` `number` `Number(null) === 0` `Number("") === 0` 
+ * - `<= 10000` `input > 0` `output > 0` 0 $0.00 
+ * - `short`/`family` 
+ */
+function isValidPricingEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
   if (
     typeof entry.input !== 'number' ||
@@ -222,59 +139,13 @@ function isValidPricingRateTriplet(entry) {
   if (!Number.isFinite(cache) || cache < 0 || cache > 10000) return false;
   if (!Number.isFinite(output) || output < 0 || output > 10000) return false;
   if (input === 0 && output === 0) return false;
-  return true;
-}
-
-/**
- * 校验并归一化单个时间阶段单价配置（左闭右开 `[fromMs, untilMs)`）。
- * 至少需声明合法的 `from` 或 `until` ISO 时间戳，且若同时声明须满足 `fromMs < untilMs`。
- */
-function sanitizePricingPhase(rawPhase) {
-  if (!isValidPricingRateTriplet(rawPhase)) return null;
-  let from = null;
-  let fromMs = -Infinity;
-  if (rawPhase.from !== undefined && rawPhase.from !== null) {
-    if (typeof rawPhase.from !== 'string' || !rawPhase.from.trim()) return null;
-    const parsedFrom = parseIsoMs(rawPhase.from.trim());
-    if (!parsedFrom || parsedFrom <= 0) return null;
-    from = rawPhase.from.trim();
-    fromMs = parsedFrom;
-  }
-  let until = null;
-  let untilMs = Infinity;
-  if (rawPhase.until !== undefined && rawPhase.until !== null) {
-    if (typeof rawPhase.until !== 'string' || !rawPhase.until.trim()) return null;
-    const parsedUntil = parseIsoMs(rawPhase.until.trim());
-    if (!parsedUntil || parsedUntil <= 0) return null;
-    until = rawPhase.until.trim();
-    untilMs = parsedUntil;
-  }
-  if (from === null && until === null) return null;
-  if (fromMs >= untilMs) return null;
-  return {
-    ...(from !== null ? { from, fromMs } : {}),
-    ...(until !== null ? { until, untilMs } : {}),
-    input: rawPhase.input,
-    cache: rawPhase.cache,
-    output: rawPhase.output,
-  };
-}
-
-/**
- * 校验单条模型价格配置是否合法：
- * - `input`/`cache`/`output` 必须为原生 `number` 类型（阻止 `Number(null) === 0` 或 `Number("") === 0` 的隐式转换漏洞）；
- * - 数值必须非负且 `<= 10000`，且至少 `input > 0` 或 `output > 0`（拒绝全 0 伪价格将未定价模型篡改为 $0.00）；
- * - `short`/`family` 必须为非空字符串。
- */
-function isValidPricingEntry(entry) {
-  if (!isValidPricingRateTriplet(entry)) return false;
   if (typeof entry.short !== 'string' || !entry.short.trim()) return false;
   if (typeof entry.family !== 'string' || !entry.family.trim()) return false;
   return true;
 }
 
 /**
- * 校验单条枚举占位符映射是否合法。
+ * 
  */
 function isValidPlaceholderEntry(entry) {
   if (!entry || typeof entry !== 'object') return false;
@@ -284,8 +155,8 @@ function isValidPlaceholderEntry(entry) {
 }
 
 /**
- * 清洗并校验来自本地或云端的 `pricing-catalog.json` 原始对象。
- * 任何格式不合法的单条记录会被自动过滤，防止异常数据污染内存价格表。
+ * `pricing-catalog.json` 
+ * 
  *
  * @param {object} raw
  * @returns {object|null}
@@ -298,20 +169,12 @@ export function sanitizeCatalogPayload(raw) {
     for (const [k, v] of Object.entries(raw.pricing)) {
       const key = String(k || '').trim();
       if (!key || !isValidPricingEntry(v)) continue;
-      let phases = null;
-      if (Array.isArray(v.phases)) {
-        const cleanedPhases = v.phases.map(sanitizePricingPhase).filter(Boolean);
-        if (cleanedPhases.length > 0) {
-          phases = cleanedPhases;
-        }
-      }
       pricing[key] = {
         input: v.input,
         cache: v.cache,
         output: v.output,
         short: String(v.short).trim(),
         family: normalizeModelFamily(v.family),
-        ...(phases ? { phases } : {}),
       };
       validPricingCount++;
     }
@@ -340,12 +203,6 @@ export function sanitizeCatalogPayload(raw) {
     return null;
   }
 
-  const explicitReleaseUrl = sanitizeTrustedGithubUrl(raw.releaseUrl, '');
-  const explicitDownloadUrl = sanitizeTrustedGithubUrl(raw.downloadUrl, '');
-  const explicitArchiveUrl = sanitizeTrustedGithubUrl(raw.archiveFallbackUrl, '');
-  const rawSourceUrl = typeof raw.sourceUrl === 'string' ? raw.sourceUrl.trim() : '';
-  const isLegacySource = isLegacyGithubRepoUrl(rawSourceUrl);
-
   return {
     schemaVersion: Number(raw.schemaVersion || 1),
     catalogVersion:
@@ -355,103 +212,35 @@ export function sanitizeCatalogPayload(raw) {
     updatedAt:
       typeof raw.updatedAt === 'string' && raw.updatedAt.trim() ? raw.updatedAt.trim() : null,
     latestPluginVersion,
-    releaseUrl: explicitReleaseUrl || DEFAULT_RELEASE_URL,
-    downloadUrl: explicitDownloadUrl || DEFAULT_DOWNLOAD_URL,
-    archiveFallbackUrl: explicitArchiveUrl || DEFAULT_ARCHIVE_FALLBACK_URL,
-    hasReleaseUrl: Boolean(explicitReleaseUrl),
-    hasDownloadUrl: Boolean(explicitDownloadUrl),
-    hasArchiveFallbackUrl: Boolean(explicitArchiveUrl),
-    fetchedAtMs: isLegacySource ? 0 : Number(raw.fetchedAtMs || 0),
-    sourceUrl: isLegacySource ? '' : rawSourceUrl,
+    releaseUrl: '',
+    downloadUrl: '',
+    archiveFallbackUrl: '',
+    hasReleaseUrl: false,
+    hasDownloadUrl: false,
+    hasArchiveFallbackUrl: false,
+    fetchedAtMs: 0,
+    sourceUrl: '',
     pricing,
     placeholders,
   };
 }
 
 /**
- * 按「随包本地目录 -> 云端缓存（按 `updatedAt` 新旧自动裁决优先级）」合并重建内存价格表。
+ * `pricing-catalog.json` 
  */
 export function rebuildActiveCatalog() {
   const localRaw = loadJson(LOCAL_CATALOG_FILE, null);
-  const remoteRaw = loadJson(REMOTE_CATALOG_CACHE_FILE, null);
   const localCat = sanitizeCatalogPayload(localRaw);
-  const remoteCat = sanitizeCatalogPayload(remoteRaw);
 
-  const localUpdatedMs = parseIsoMs(localCat?.updatedAt);
-  const remoteUpdatedMs = parseIsoMs(remoteCat?.updatedAt);
-
-  const layers = [];
-  if (localCat && remoteCat) {
-    if (localUpdatedMs > remoteUpdatedMs) {
-      layers.push({ kind: 'remote', cat: remoteCat }, { kind: 'local', cat: localCat });
-    } else {
-      layers.push({ kind: 'local', cat: localCat }, { kind: 'remote', cat: remoteCat });
-    }
-  } else if (remoteCat) {
-    layers.push({ kind: 'remote', cat: remoteCat });
-  } else if (localCat) {
-    layers.push({ kind: 'local', cat: localCat });
-  }
-
-  const nextPricing = {};
-  const nextPlaceholders = {};
-  let activeSource = 'builtin';
-  let catalogVersion = 'builtin';
-  let updatedAt = null;
+  const nextPricing = localCat ? { ...localCat.pricing } : {};
+  const nextPlaceholders = localCat ? { ...localCat.placeholders } : {};
+  const activeSource = localCat ? 'local' : 'builtin';
+  const catalogVersion = localCat?.catalogVersion || 'builtin';
+  const updatedAt = localCat?.updatedAt || null;
   const installedVersion = readInstalledPluginVersion();
-  const customForkRepo = detectCustomGitForkRepo();
-  const customForkPrefix = customForkRepo ? `/${customForkRepo.toLowerCase()}` : '';
-  let latestPluginVersion = installedVersion;
-  let releaseUrl = customForkRepo
-    ? `https://github.com/${customForkRepo}/releases/latest`
-    : DEFAULT_RELEASE_URL;
-  let downloadUrl = customForkRepo
-    ? `https://github.com/${customForkRepo}/releases/latest/download/usage-monitor.zip`
-    : DEFAULT_DOWNLOAD_URL;
-  let archiveFallbackUrl = customForkRepo
-    ? `https://codeload.github.com/${customForkRepo}/zip/refs/heads/main`
-    : DEFAULT_ARCHIVE_FALLBACK_URL;
-
-  for (const { kind, cat } of layers) {
-    Object.assign(nextPricing, cat.pricing);
-    Object.assign(nextPlaceholders, cat.placeholders);
-    if (kind === 'remote' || cat.catalogVersion || cat.updatedAt) {
-      activeSource = kind;
-    }
-    if (cat.catalogVersion) catalogVersion = cat.catalogVersion;
-    if (cat.updatedAt) updatedAt = cat.updatedAt;
-    const isFromCustomFork = Boolean(
-      customForkPrefix &&
-        typeof cat.sourceUrl === 'string' &&
-        cat.sourceUrl.toLowerCase().includes(customForkPrefix)
-    );
-    const shouldAcceptCatalogReleaseMeta = !customForkRepo || isFromCustomFork;
-    if (shouldAcceptCatalogReleaseMeta && cat.latestPluginVersion) {
-      // 以当前更高优先级层的 latestPluginVersion 为准，但永不低于本地已安装版本；自定义 Fork 忽略上游版本号
-      latestPluginVersion =
-        compareSemver(cat.latestPluginVersion, installedVersion) > 0
-          ? cat.latestPluginVersion
-          : installedVersion;
-    }
-    if (shouldAcceptCatalogReleaseMeta) {
-      if (cat.hasReleaseUrl) releaseUrl = cat.releaseUrl;
-      if (cat.hasDownloadUrl) downloadUrl = cat.downloadUrl;
-      if (cat.hasArchiveFallbackUrl) archiveFallbackUrl = cat.archiveFallbackUrl;
-    }
-  }
 
   for (const k of Object.keys(MODEL_PRICING)) delete MODEL_PRICING[k];
   Object.assign(MODEL_PRICING, nextPricing);
-
-  const boundarySet = new Set();
-  for (const entry of Object.values(nextPricing)) {
-    if (!Array.isArray(entry?.phases)) continue;
-    for (const ph of entry.phases) {
-      if (Number.isFinite(ph.fromMs) && ph.fromMs > 0) boundarySet.add(ph.fromMs);
-      if (Number.isFinite(ph.untilMs) && ph.untilMs > 0) boundarySet.add(ph.untilMs);
-    }
-  }
-  pricingPhaseBoundariesMs = Array.from(boundarySet).sort((a, b) => a - b);
 
   for (const k of Object.keys(PLACEHOLDER_MAP)) delete PLACEHOLDER_MAP[k];
   Object.assign(PLACEHOLDER_MAP, nextPlaceholders);
@@ -460,43 +249,39 @@ export function rebuildActiveCatalog() {
   cloudSyncState.source = activeSource;
   cloudSyncState.catalogVersion = catalogVersion;
   cloudSyncState.updatedAt = updatedAt;
-  cloudSyncState.fetchedAtMs = remoteCat?.fetchedAtMs || cloudSyncState.fetchedAtMs || 0;
-  cloudSyncState.sourceUrl = remoteCat?.sourceUrl || cloudSyncState.sourceUrl || '';
-  cloudSyncState.latestPluginVersion = latestPluginVersion;
-  cloudSyncState.releaseUrl = releaseUrl;
-  cloudSyncState.downloadUrl = downloadUrl;
-  cloudSyncState.archiveFallbackUrl = archiveFallbackUrl;
+  cloudSyncState.fetchedAtMs = cloudSyncState.fetchedAtMs || 0;
+  cloudSyncState.sourceUrl = '';
+  cloudSyncState.latestPluginVersion = installedVersion;
+  cloudSyncState.releaseUrl = '';
+  cloudSyncState.downloadUrl = '';
+  cloudSyncState.archiveFallbackUrl = '';
 }
 
-// 模块初始化时立即构建一次当前生效的价格目录
+
 rebuildActiveCatalog();
 
 /**
- * 获取供前端展示的云端价格目录状态与插件更新状态快照。
+ * 
  */
 export function getCloudStatus() {
   const currentPluginVersion = readInstalledPluginVersion();
-  const rawLatest = cloudSyncState.latestPluginVersion || currentPluginVersion;
-  const latestPluginVersion =
-    compareSemver(rawLatest, currentPluginVersion) > 0 ? rawLatest : currentPluginVersion;
-  const updateAvailable = compareSemver(latestPluginVersion, currentPluginVersion) > 0;
   return {
     currentPluginVersion,
-    latestPluginVersion,
-    updateAvailable,
-    installMode: existsSync(join(PLUGIN_ROOT, '.git')) ? 'git' : 'zip',
-    releaseUrl: cloudSyncState.releaseUrl || DEFAULT_RELEASE_URL,
-    downloadUrl: cloudSyncState.downloadUrl || DEFAULT_DOWNLOAD_URL,
+    latestPluginVersion: currentPluginVersion,
+    updateAvailable: false,
+    installMode: 'local',
+    releaseUrl: '',
+    downloadUrl: '',
     catalogVersion: cloudSyncState.catalogVersion || 'builtin',
     catalogUpdatedAt: cloudSyncState.updatedAt || null,
     lastSyncedAtMs: cloudSyncState.fetchedAtMs || 0,
-    source: cloudSyncState.source || 'builtin',
+    source: cloudSyncState.source || 'local',
     modelCount: Object.keys(MODEL_PRICING).length,
     placeholderCount: Object.keys(PLACEHOLDER_MAP).length,
-    isSyncing: Boolean(cloudSyncState.isSyncing),
-    lastSyncError: cloudSyncState.lastError || null,
-    isUpdating: Boolean(pluginUpdateState.isUpdating),
+    isSyncing: false,
+    lastSyncError: null,
+    isUpdating: false,
     lastUpdateResult: pluginUpdateState.lastResult || null,
-    lastUpdateError: pluginUpdateState.lastError || null,
+    lastUpdateError: null,
   };
 }

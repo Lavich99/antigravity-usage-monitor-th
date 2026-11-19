@@ -1,6 +1,6 @@
 /**
  * @fileoverview Host-aware Theme Accent Swatch Picker (`ThemeColorPicker.js`).
- * Provides the default "跟随宿主" (`host`) pill plus 6 curated color swatches.
+ * Provides the default " " (`host`) pill plus 6 curated color swatches.
  */
 
 import { defineComponent } from '../../core/component.js';

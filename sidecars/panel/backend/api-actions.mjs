@@ -1,21 +1,19 @@
 /**
- * @fileoverview Sidecar Webview 与主窗口双栖桥接共享的 API 路由分发与运行时引导层。
+ * @fileoverview Sidecar Webview API 
  *
- * 与 `sidecar_sdk` 完全解耦，使同一套遥测聚合、偏好持久化、云端目录同步与自更新逻辑可同时服务于：
- * 1. Antigravity 2.0 客户端右侧辅助栏 (`main.mjs` -> `SidecarApp`)；
- * 2. Antigravity IDE / 2.0 后台守护桥接进程 (`mcp-entry.mjs` -> `bridge-daemon.mjs`)。
+ * `sidecar_sdk` 
+ * 1. Antigravity 2.0 (`main.mjs` -> `SidecarApp`) 
+ * 2. Antigravity IDE / 2.0 (`mcp-entry.mjs` -> `bridge-daemon.mjs`) 
  */
 
+import { readFileSync, promises as fsPromises } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { BRIDGE_API_ROUTE_DEFS } from '../shared/window-bridge-protocol.mjs';
-import { handleAccountCredentialAction } from './account-switch.mjs';
-import { isLocalHostRequest, readLocalAsync } from './http-helpers.mjs';
-import { clearScannerRuntimeMemos } from './local-scanner.mjs';
 import {
+  HERE,
   SETTINGS_FILE,
   clearRuntimeCaches,
-  cloudSyncState,
   computeRuntimeCodeVersion,
   createDefaultSettingsObject,
   isPlainObject,
@@ -45,14 +43,8 @@ import {
 import { getCloudStatus } from './pricing-catalog.mjs';
 import { buildTelemetryPayload } from './telemetry-builder.mjs';
 import {
-  ensureDesktopLaunchEntriesConfigured,
-  triggerDesktopHostRelaunch,
-} from './desktop-launcher-config.mjs';
-import {
-  ensureIdeRemoteDebuggingArgv,
   notifyModelContextWindowsChanged,
   notifyWindowOverlaySetting,
-  resolveDevToolsPortCandidates,
   startDefaultWindowBridge,
 } from './window-bridge.mjs';
 import { ensureCliStatusLineConfigured } from './cli-statusline-config.mjs';
@@ -65,7 +57,60 @@ export function setStandalonePortListener(listener) {
   standalonePortListener = typeof listener === 'function' ? listener : null;
 }
 
-export { isLocalHostRequest, readLocalAsync };
+/**
+ * `sidecars/panel` 
+ *
+ * @param {string} relPath 
+ * @returns {Promise<string>}
+ */
+export const readLocalAsync = async (relPath) => {
+  const fullPath = join(HERE, relPath);
+  if (typeof fsPromises !== 'undefined' && fsPromises?.readFile) {
+    return fsPromises.readFile(fullPath, 'utf8');
+  }
+  return readFileSync(fullPath, 'utf8');
+};
+
+/**
+ * (`127.0.0.1` / `localhost` / `[::1]`) Webview Origin 
+ * DNS Rebinding API 
+ *
+ * @param {object} req
+ * @returns {boolean}
+ */
+export function isLocalHostRequest(req) {
+  if (!req?.headers) return true;
+  const host = String(req.headers.host || '').trim().toLowerCase();
+  const hostMatch = host.match(/^(127\.0\.0\.1|localhost|\[::1\])(?::(\d+))?$/);
+  if (host && !hostMatch) {
+    return false;
+  }
+  const origin = String(req.headers.origin || '').trim().toLowerCase();
+  if (origin && /^vscode-webview:\/\/[a-z0-9._-]+$/.test(origin)) {
+    return true;
+  }
+  const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (secFetchSite === 'cross-site') {
+    return false;
+  }
+  if (origin) {
+    const originMatch = origin.match(
+      /^(https?):\/\/(127\.0\.0\.1|localhost|\[::1\])(?::(\d+))?$/
+    );
+    if (!originMatch) {
+      return false;
+    }
+    if (hostMatch) {
+      const defaultPort = originMatch[1] === 'https' ? '443' : '80';
+      const originPort = originMatch[3] || defaultPort;
+      const hostPort = hostMatch[2] || defaultPort;
+      if (originPort !== hostPort) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
 
 const MAX_SAFE_DATE_MS = 8_640_000_000_000_000;
 
@@ -95,8 +140,7 @@ function projectDisplayStep(st) {
   };
 }
 
-const MAX_DISPLAY_STEP_CACHE_ENTRIES = 8;
-const displayStepsCache = new Map();
+let lastDisplaySteps = null;
 const displayStepFields = Object.keys(projectDisplayStep({}));
 
 function haveSameDisplaySteps(previous, current) {
@@ -119,34 +163,23 @@ function projectDisplayTelemetry(payload, requestedRevision) {
   let projected;
   let revision;
   if (typeof requestedRevision === 'string') {
-    const cacheKey = active.cascadeId || '__empty__';
     const scope = [
       payload.account?.status,
       payload.account?.email || payload.account?.name || '',
       active.cascadeId,
       ...agents.map((agent) => agent.agentId),
     ];
-    const previous = displayStepsCache.get(cacheKey);
+    const previous = lastDisplaySteps;
     if (previous && isDeepStrictEqual(scope, previous.scope) &&
         sourceSteps.every((steps, index) => (steps && previous.sources[index]?.deref() === steps) ||
           haveSameDisplaySteps(previous.steps[index], steps))) {
       ({ revision, steps: projected } = previous);
       previous.sources = sourceSteps.map((steps) => steps ? new WeakRef(steps) : undefined);
-      displayStepsCache.delete(cacheKey);
-      displayStepsCache.set(cacheKey, previous);
     } else {
       revision = randomUUID();
       projected = sourceSteps.map((steps) => steps?.map(projectDisplayStep));
-      if (!displayStepsCache.has(cacheKey) && displayStepsCache.size >= MAX_DISPLAY_STEP_CACHE_ENTRIES) {
-        displayStepsCache.delete(displayStepsCache.keys().next().value);
-      }
-      displayStepsCache.delete(cacheKey);
-      displayStepsCache.set(cacheKey, {
-        scope,
-        steps: projected,
-        revision,
-        sources: sourceSteps.map((steps) => steps ? new WeakRef(steps) : undefined),
-      });
+      lastDisplaySteps = { scope, steps: projected, revision,
+        sources: sourceSteps.map((steps) => steps ? new WeakRef(steps) : undefined) };
     }
   }
   projected ||= sourceSteps.map((steps) => steps?.map(projectDisplayStep));
@@ -164,6 +197,9 @@ function projectDisplayTelemetry(payload, requestedRevision) {
   };
 }
 
+let telemetryRevSeq = 0;
+let lastTelemetrySnapshot = null;
+
 export async function executeTelemetryAction(data, { onRestart = null } = {}) {
   const rawConvId = String(
     data?.conversationId || process.env.ANTIGRAVITY_CONVERSATION_ID || ''
@@ -173,16 +209,6 @@ export async function executeTelemetryAction(data, { onRestart = null } = {}) {
   if (lsRuntimeEndpoint.addr !== 'test.invalid') {
     if (!lsRuntimeEndpoint.baseUrl) {
       await ensureLsEndpointDiscovered({ force: false });
-    }
-    if (lsRuntimeEndpoint.baseUrl) {
-      if (force && Date.now() - cloudSyncState.lastAttemptMs > 15_000) {
-        await Promise.race([
-          syncCloudCatalog({ force: true }).catch(() => {}),
-          new Promise((r) => setTimeout(r, 1200)),
-        ]);
-      } else {
-        syncCloudCatalog({ force: false }).catch(() => {});
-      }
     }
   }
   const filterOpts = {
@@ -221,11 +247,54 @@ export async function executeTelemetryAction(data, { onRestart = null } = {}) {
   const responsePayload = data?.stepDetails === 'display'
     ? projectDisplayTelemetry(payload, data.stepRevision)
     : payload;
+
+  const clientRev = String(data?.telemetryRev || '').trim();
+  const scopeKey = `${convId}:${filterOpts.range}:${filterOpts.startMs}:${filterOpts.endMs}:${data?.stepDetails || ''}:${responsePayload?.stepRevision || ''}`;
+  const stableConsumption =
+    responsePayload?.consumption?.selectedRange && !filterOpts.endMs
+      ? {
+          ...responsePayload.consumption,
+          selectedRange: { ...responsePayload.consumption.selectedRange, endMs: 0 },
+        }
+      : responsePayload?.consumption;
+  const contentJson = JSON.stringify({
+    ...responsePayload,
+    timestamp: '',
+    ...(stableConsumption ? { consumption: stableConsumption } : {}),
+  });
+  let currentRev;
+  if (
+    !force &&
+    lastTelemetrySnapshot &&
+    lastTelemetrySnapshot.scopeKey === scopeKey &&
+    lastTelemetrySnapshot.contentJson === contentJson
+  ) {
+    currentRev = lastTelemetrySnapshot.rev;
+  } else {
+    telemetryRevSeq += 1;
+    currentRev = String(telemetryRevSeq);
+    lastTelemetrySnapshot = { scopeKey, contentJson, rev: currentRev };
+  }
+
+  if (!force && clientRev && clientRev === currentRev) {
+    return {
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'Cache-Control': 'no-store' },
+      body: JSON.stringify({
+        unchanged: true,
+        telemetryRev: currentRev,
+        timestamp: responsePayload.timestamp,
+      }),
+    };
+  }
+
+  const taggedBody = JSON.stringify({ ...responsePayload, telemetryRev: currentRev });
   return {
     status: 200,
     contentType: 'application/json',
     headers: { 'Cache-Control': 'no-store' },
-    body: JSON.stringify(responsePayload),
+    body: taggedBody,
   };
 }
 
@@ -308,7 +377,7 @@ export function executeSettingsAction(data) {
     try {
       standalonePortListener(Number(updated.standalonePort || 0));
     } catch {
-      // 忽略独立端口热重载回调异常
+      
     }
   }
   return {
@@ -393,7 +462,7 @@ export function executeResetSettingsAction() {
     try {
       standalonePortListener(Number(updated.standalonePort || 0));
     } catch {
-      // 忽略独立端口热重载回调异常
+      
     }
   }
   return {
@@ -417,8 +486,6 @@ export function executeRebuildCacheAction() {
       body: JSON.stringify({ ok: false, error: 'Failed to clear trajectory cache' }),
     };
   }
-  displayStepsCache.clear();
-  clearScannerRuntimeMemos();
   return {
     ok: true,
     status: 200,
@@ -448,71 +515,37 @@ export async function executePluginUpdateAction() {
   };
 }
 
-export async function executeAccountCredentialAction(data) {
-  const result = await handleAccountCredentialAction(data);
-  return {
-    status: 200,
-    contentType: 'application/json',
-    headers: { 'Cache-Control': 'no-store' },
-    body: JSON.stringify(result),
-  };
-}
-
-export async function executeBridgeRelaunchAction() {
-  ensureIdeRemoteDebuggingArgv({ enabled: true });
-  await ensureDesktopLaunchEntriesConfigured({ enabled: true }).catch(() => {});
-  const result = await triggerDesktopHostRelaunch({
-    stalePortFiles: resolveDevToolsPortCandidates(),
-  });
-  return {
-    status: result.ok ? 200 : Number(result.status || 500),
-    contentType: 'application/json',
-    headers: { 'Cache-Control': 'no-store' },
-    body: JSON.stringify(result),
-  };
-}
-
-const BRIDGE_ROUTE_LOOKUP = new Map(
-  BRIDGE_API_ROUTE_DEFS.map((r) => [`${r.method}:${r.path}`, r.action])
-);
-
 export async function dispatchBridgeApiRequest(pathname, method, data, opts = undefined) {
-  const action = BRIDGE_ROUTE_LOOKUP.get(`${String(method || '').toUpperCase()}:${pathname}`);
-  switch (action) {
-    case 'telemetry':
-      return executeTelemetryAction(data, opts);
-    case 'settings':
-      if (isPlainObject(data) && data.__bridgeAction === 'relaunch') {
-        return executeBridgeRelaunchAction();
-      }
-      return executeSettingsAction(data);
-    case 'accounts_get':
-      return executeAccountCredentialAction();
-    case 'accounts_update':
-      return executeAccountCredentialAction(data);
-    case 'context_window':
-      return executeModelContextWindowAction(data);
-    case 'settings_reset':
-      return executeResetSettingsAction();
-    case 'cache_rebuild':
-      return executeRebuildCacheAction();
-    case 'cloud_sync':
-      return executeCloudSyncAction();
-    case 'plugin_update':
-      return executePluginUpdateAction();
-    case 'bridge_relaunch':
-      return executeBridgeRelaunchAction();
-    default:
-      return {
-        status: 404,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'Not found' }),
-      };
+  if (pathname === '/api/telemetry' && method === 'GET') {
+    return executeTelemetryAction(data, opts);
   }
+  if (pathname === '/api/settings' && method === 'POST') {
+    return executeSettingsAction(data);
+  }
+  if (pathname === '/api/context-window' && method === 'POST') {
+    return executeModelContextWindowAction(data);
+  }
+  if (pathname === '/api/settings/reset' && method === 'POST') {
+    return executeResetSettingsAction();
+  }
+  if (pathname === '/api/cache/rebuild' && method === 'POST') {
+    return executeRebuildCacheAction();
+  }
+  if (pathname === '/api/cloud-sync' && method === 'POST') {
+    return executeCloudSyncAction();
+  }
+  if (pathname === '/api/plugin-update' && method === 'POST') {
+    return executePluginUpdateAction();
+  }
+  return {
+    status: 404,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'Not found' }),
+  };
 }
 
 /**
- * 启动进程级双栖窗口桥接器（兼容 Sidecar 环境与独立后台守护进程环境）。
+ * Sidecar 
  *
  * @param {{ allowDynamicLs?: boolean, onRestart?: () => void }} [options]
  */
@@ -528,16 +561,8 @@ export function bootWindowBridgeRuntime({ allowDynamicLs = false, onRestart = nu
     setSidecarRestartHandler(onRestart);
   }
 
-  if (lsRuntimeEndpoint.baseUrl) {
-    syncCloudCatalog({ force: false }).catch(() => {});
-  } else {
-    ensureLsEndpointDiscovered({ force: false })
-      .then((ok) => {
-        if (ok) {
-          syncCloudCatalog({ force: false }).catch(() => {});
-        }
-      })
-      .catch(() => {});
+  if (!lsRuntimeEndpoint.baseUrl) {
+    ensureLsEndpointDiscovered({ force: false }).catch(() => {});
   }
 
   return startDefaultWindowBridge({

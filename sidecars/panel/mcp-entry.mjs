@@ -1,13 +1,13 @@
 /**
- * @fileoverview 零工具开销的轻量 MCP Stdio 宿主保活入口 (`mcp_config.json`)。
+ * @fileoverview MCP Stdio (`mcp_config.json`) 
  *
- * 设计原因：
- * Antigravity IDE 默认关闭了 UI Sidecar 管理器 (`enable-sidecars = false`)，不会启动 `sidecar.json`。
- * 通过将本文件注册为插件内置的 0 工具 MCP Stdio 服务：
- * 1. `agy --hub` 启动或启用插件时会自动拉起本进程，从而托管启动 `bridge-daemon.mjs` 将胶囊挂载至 IDE 顶栏；
- * 2. `tools/list` 返回空数组 `[]`，不注入任何工具定义，消耗 0 个上下文 Token；
- * 3. 用户在 Customizations 中关闭插件开关或退出 IDE 时，`agy --hub` 关闭 `stdin`，
- *    本进程立即通知 `bridge-daemon.mjs` 卸载窗口顶栏组件并干净退出。
+ * 
+ * Antigravity IDE UI Sidecar (`enable-sidecars = false`) `sidecar.json` 
+ * 0 MCP Stdio 
+ * 1. `agy --hub` `bridge-daemon.mjs` IDE 
+ * 2. `tools/list` `[]` 0 Token 
+ * 3. Customizations IDE `agy --hub` `stdin` 
+ * `bridge-daemon.mjs` 
  */
 
 import { spawn } from 'node:child_process';
@@ -36,13 +36,13 @@ export function readMcpServerVersion() {
       }
     }
   } catch {
-    // 忽略清单读取失败
+    
   }
   return '1.4.4';
 }
 
 /**
- * 纯函数处理单条 MCP JSON-RPC 2.0 消息；通知类消息（无 `id`）返回 `null`。
+ * MCP JSON-RPC 2.0 `id` `null` 
  *
  * @param {object} msg
  * @param {string} [serverVersion='1.4.4']
@@ -134,7 +134,7 @@ function startMcpHostSupervisor() {
       try {
         process.stderr.write(chunk);
       } catch {
-        // 忽略日志转发异常
+        
       }
     });
 
@@ -161,7 +161,7 @@ function startMcpHostSupervisor() {
     });
 
     child.on('error', () => {
-      // 交由 exit 回调或退避重试统一处理
+      // exit
     });
   }
 
@@ -181,7 +181,7 @@ function startMcpHostSupervisor() {
       try {
         child.kill();
       } catch {
-        // 忽略强杀异常
+        
       }
       process.exit(0);
     }, 1800);
@@ -199,7 +199,7 @@ function startMcpHostSupervisor() {
       try {
         child.kill();
       } catch {
-        // 忽略异常
+        
       }
       process.exit(0);
     }
@@ -260,7 +260,7 @@ function startMcpHostSupervisor() {
         try {
           dispatchParsedPayload(JSON.parse(bodyStr), 'lsp');
         } catch {
-          // 忽略损坏帧
+          
         }
         continue;
       }
@@ -273,7 +273,7 @@ function startMcpHostSupervisor() {
       try {
         dispatchParsedPayload(JSON.parse(lineStr), framingMode);
       } catch {
-        // 忽略非 JSON 行
+        // JSON
       }
     }
   }

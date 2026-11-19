@@ -1,9 +1,9 @@
 /**
- * @fileoverview 多时间窗口解析、用量桶累加、趋势序列、月度序列与分模型/分来源聚合引擎。
+ * @fileoverview / 
  *
- * 负责将内存缓存 (`trajectoryCache`) 与外部深层统计缓存 (`loadExternalDeepStatsCache`)
- * 中的所有步骤按预设窗口（`all`, `5h`, `today`, `24h`, `week`, `7d`, `14d`, `30d`）与当前选定窗口
- * 进行去重遍历聚合，输出前端消费分析与模型明细所需的完整统计结构。
+ * (`trajectoryCache`) (`loadExternalDeepStatsCache`)
+ * `all`, `5h`, `today`, `24h`, `week`, `7d`, `14d`, `30d` 
+ * 
  */
 
 import { isDeepStrictEqual } from 'node:util';
@@ -13,8 +13,8 @@ import {
   createSpeedAccumulator,
   finishSpeed,
   parseIsoMs,
-} from '../trajectory-metrics.mjs';
-import { listCachedTrajectoryEntries, roundMetric } from './config.mjs';
+} from '../speed-metrics.mjs';
+import { roundMetric, trajectoryCache } from './config.mjs';
 import { loadExternalDeepStatsCache } from './local-scanner.mjs';
 import {
   computeStepCost,
@@ -30,12 +30,8 @@ function safeTok(val) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-function normalizeOwnerAccount(val) {
-  return typeof val === 'string' ? val.trim().toLowerCase() : '';
-}
-
 /**
- * 获取本地当日 00:00:00.000 的毫秒时间戳。
+ * 00:00:00.000 
  *
  * @param {Date|number} [now=new Date()]
  * @returns {number}
@@ -54,7 +50,7 @@ function getStartOfLocalOffsetDaysMs(nowMs, offsetDays) {
 }
 
 /**
- * 获取本地下一个周一 00:00:00.000 的 ISO 时间字符串（用于自定义本机周限额重置倒计时）。
+ * 00:00:00.000 ISO 
  *
  * @param {Date|number} [now=new Date()]
  * @returns {string}
@@ -69,7 +65,7 @@ export function getNextMondayResetIso(now = new Date()) {
 }
 
 /**
- * 获取本地本周一 00:00:00.000 的毫秒时间戳。
+ * 00:00:00.000 
  *
  * @param {Date|number} [now=new Date()]
  * @returns {number}
@@ -84,7 +80,7 @@ function getStartOfCurrentWeekMs(now = new Date()) {
 }
 
 /**
- * 根据时间范围键名 (`rangeKey`) 与官方配额重置锚点 (`cycleAnchors`) 解析起止毫秒时间戳。
+ * (`rangeKey`) (`cycleAnchors`) 
  *
  * @param {string} [rangeKey='all']
  * @param {number} [customStartMs=0]
@@ -110,15 +106,15 @@ function resolveTimeWindow(
           : nowMs - 5 * 3600 * 1000;
       return {
         key: '5h',
-        label: reset5hMs > nowMs ? '当前 5h 周期' : '近 5 小时',
+        label: reset5hMs > nowMs ? 'Current 5h Cycle' : 'Last 5 Hours',
         startMs: start5hMs,
         endMs: nowMs,
       };
     }
     case 'today':
-      return { key: 'today', label: '今日', startMs: getStartOfLocalDayMs(now), endMs: nowMs };
+      return { key: 'today', label: 'Today', startMs: getStartOfLocalDayMs(now), endMs: nowMs };
     case '24h':
-      return { key: '24h', label: '近 24 小时', startMs: nowMs - 24 * 3600 * 1000, endMs: nowMs };
+      return { key: '24h', label: 'Last 24 Hours', startMs: nowMs - 24 * 3600 * 1000, endMs: nowMs };
     case 'week': {
       const resetWkMs = cycleAnchors.weeklyResetMs || 0;
       const startWkMs =
@@ -127,7 +123,7 @@ function resolveTimeWindow(
           : getStartOfCurrentWeekMs(now);
       return {
         key: 'week',
-        label: resetWkMs > nowMs ? '当前周限周期' : '本周',
+        label: resetWkMs > nowMs ? 'Current Weekly Cycle' : 'This Week',
         startMs: startWkMs,
         endMs: nowMs,
       };
@@ -135,21 +131,21 @@ function resolveTimeWindow(
     case '7d':
       return {
         key: '7d',
-        label: '近 7 天',
+        label: 'Last 7 Days',
         startMs: getStartOfLocalOffsetDaysMs(nowMs, 7),
         endMs: nowMs,
       };
     case '14d':
       return {
         key: '14d',
-        label: '近 14 天',
+        label: 'Last 14 Days',
         startMs: getStartOfLocalOffsetDaysMs(nowMs, 14),
         endMs: nowMs,
       };
     case '30d':
       return {
         key: '30d',
-        label: '近 30 天',
+        label: 'Last 30 Days',
         startMs: getStartOfLocalOffsetDaysMs(nowMs, 30),
         endMs: nowMs,
       };
@@ -158,19 +154,19 @@ function resolveTimeWindow(
       const e = Number(customEndMs) > 0 ? Number(customEndMs) : nowMs;
       return {
         key: 'custom',
-        label: '自定义时段',
+        label: 'Custom Range',
         startMs: Math.min(s, e),
         endMs: Math.max(s, e),
       };
     }
     case 'all':
     default:
-      return { key: 'all', label: '全部时间', startMs: 0, endMs: Infinity };
+      return { key: 'all', label: 'All Time', startMs: 0, endMs: Infinity };
   }
 }
 
 /**
- * 创建一个空的用量统计累加桶。
+ * 
  */
 function createUsageBucket() {
   return {
@@ -188,11 +184,11 @@ function createUsageBucket() {
 }
 
 /**
- * 将单个模型步骤的 Token 与成本累加至目标统计桶。
+ * Token 
  *
  * @param {ReturnType<typeof createUsageBucket>} bucket
- * @param {object} usage 已归一化的单步用量
- * @param {string} cascadeId 会话标识
+ * @param {object} usage 
+ * @param {string} cascadeId 
  */
 function accumulateStepIntoBucket(bucket, usage, cascadeId) {
   const { inTok, cacheTok, outTok, thinkTok, respTok, stepTotalTokens,
@@ -211,7 +207,7 @@ function accumulateStepIntoBucket(bucket, usage, cascadeId) {
 }
 
 /**
- * 将累加完成的用量桶定型为可序列化的前端统计结构（计算缓存命中率并舍入金额）。
+ * 
  *
  * @param {ReturnType<typeof createUsageBucket>} bucket
  */
@@ -236,7 +232,7 @@ function finalizeUsageBucket(bucket) {
 }
 
 /**
- * 将单步统计数据累加至按模型分组的映射表中（供单代理、主+子汇总与全局时间范围共用）。
+ * + 
  *
  * @param {Map<string, object>} perModelStats
  * @param {object} st
@@ -313,7 +309,7 @@ function accumulateStepIntoModelMap(perModelStats, st, mInfo, stepCost) {
 }
 
 /**
- * 将按模型分组的统计映射表定型并排序为前端可渲染数组。
+ * 
  *
  * @param {Map<string, object>} perModelStats
  * @returns {object[]}
@@ -357,7 +353,7 @@ function finalizeModelBreakdownMap(perModelStats) {
 }
 
 /**
- * 针对给定步骤数组构建按模型聚合的统计列表（供单代理、主+子汇总及全局时间范围复用）。
+ * + 
  *
  * @param {object[]} [steps=[]]
  * @param {StepModelResolver} resolveStepModel
@@ -403,8 +399,7 @@ function sameUsageEntries(previous, current) {
   return previous.length === current.length && current.every((entry, index) => {
     const before = previous[index];
     return entry.steps === before.steps && entry.cascadeId === before.cascadeId &&
-      entry.appSource === before.appSource && entry.accountName === before.accountName &&
-      entry.isCurrentConv === before.isCurrentConv;
+      entry.appSource === before.appSource && entry.isCurrentConv === before.isCurrentConv;
   });
 }
 
@@ -445,16 +440,16 @@ function sameUsageWindows(previous, current, dates) {
 }
 
 /**
- * 聚合所有预设时间窗口、当前选定窗口、趋势图、年度月序列、来源占比与分模型统计。
+ * 
  *
  * @param {{
- *   filterOpts?: { range?: string, startMs?: number, endMs?: number },
- *   cycleAnchors?: { fiveHourResetMs?: number, weeklyResetMs?: number },
- *   currentAccountName?: string|null,
- *   activeCascadeId?: string|null,
- *   activeFamilyCascadeIds?: Set<string>|null,
- *   resolveStepModel: StepModelResolver
- *   modelInputs?: { catalogRevision: number, dynamicModelMap: Map }
+ * filterOpts?: { range?: string, startMs?: number, endMs?: number },
+ * cycleAnchors?: { fiveHourResetMs?: number, weeklyResetMs?: number },
+ * currentAccountName?: string|null,
+ * activeCascadeId?: string|null,
+ * activeFamilyCascadeIds?: Set<string>|null,
+ * resolveStepModel: StepModelResolver
+ * modelInputs?: { catalogRevision: number, dynamicModelMap: Map }
  * }} params
  */
 export function aggregateMultiWindowUsage({
@@ -494,7 +489,7 @@ export function aggregateMultiWindowUsage({
     sessionBuckets[k] = createUsageBucket();
   }
 
-  // 为每个配额池建立独立的 5h 与周限周期统计桶（按各池自身的 resetTime / weeklyResetTime 截取窗口）
+  // 5h resetTime / weeklyResetTime
   const poolCycleBuckets = new Map();
   if (quotaPoolsMap instanceof Map && quotaPoolsMap.size > 0) {
     const weekFallbackStartMs = getStartOfCurrentWeekMs(new Date(nowMs));
@@ -520,9 +515,6 @@ export function aggregateMultiWindowUsage({
   const hasDedicatedCarbonPool = poolCycleBuckets.has('Carbon');
   const hasDedicatedArgonPool = poolCycleBuckets.has('Argon');
   const poolByModel = new Map();
-  const quotaWeekBucket = createUsageBucket();
-  const normalizedQuotaAccount =
-    currentAccountName === null ? null : normalizeOwnerAccount(currentAccountName);
   const selectedAccountBucket = accountBuckets[selectedWindow.key] || createUsageBucket();
   const selectedSessionBucket = sessionBuckets[selectedWindow.key] || createUsageBucket();
   const perModelStats = new Map();
@@ -531,14 +523,9 @@ export function aggregateMultiWindowUsage({
   let latestSelectedStepMs = 0;
 
   const currentYear = new Date(nowMs).getFullYear();
-  const monthBoundsMs = Array.from({ length: 13 }, (_, idx) =>
-    new Date(currentYear, idx, 1).getTime()
-  );
-  const yearStartMs = monthBoundsMs[0];
-  const nextYearStartMs = monthBoundsMs[12];
   const monthlySeries = Array.from({ length: 12 }, (_, idx) => ({
     month: idx + 1,
-    label: `${idx + 1}月`,
+    label: String(idx + 1).padStart(2, '0'),
     calls: 0,
     inputTokens: 0,
     cacheReadTokens: 0,
@@ -556,9 +543,9 @@ export function aggregateMultiWindowUsage({
   const perSourceStats = new Map();
   const externalConvos = loadExternalDeepStatsCache();
 
-  // 构建大小写归一化的内存缓存与跨端深层缓存索引，彻底杜绝 `${appSource}:${cascadeId}` 键不匹配导致的双倍重复计费
+  // `${appSource}:${cascadeId}`
   const allLiveByLower = new Map();
-  for (const [rawId, entry] of listCachedTrajectoryEntries()) {
+  for (const [rawId, entry] of Object.entries(trajectoryCache)) {
     const cidLower = String(rawId || '').toLowerCase();
     if (!cidLower || !entry || typeof entry !== 'object') continue;
     const prev = allLiveByLower.get(cidLower);
@@ -571,6 +558,15 @@ export function aggregateMultiWindowUsage({
   for (const ext of externalConvos.values()) {
     const extCidLower = String(ext?.cascadeId || '').toLowerCase();
     if (!extCidLower) continue;
+    const knownLive = allLiveByLower.get(extCidLower);
+    const ownerAccount = ext.accountName || knownLive?.accountName || '';
+    if (
+      ownerAccount &&
+      currentAccountName !== '' &&
+      ownerAccount !== currentAccountName
+    ) {
+      continue;
+    }
     const prevExt = externalByCid.get(extCidLower);
     if (!prevExt || (ext.steps?.length || 0) > (prevExt.steps?.length || 0)) {
       externalByCid.set(extCidLower, ext);
@@ -580,6 +576,13 @@ export function aggregateMultiWindowUsage({
   const allEntriesToAggregate = [];
 
   for (const [cidLower, entry] of allLiveByLower.entries()) {
+    if (
+      entry?.accountName &&
+      currentAccountName !== '' &&
+      entry.accountName !== currentAccountName
+    ) {
+      continue;
+    }
     const extMatch = externalByCid.get(cidLower);
     if (extMatch && (extMatch.steps?.length || 0) > (entry?.steps?.length || 0)) {
       continue;
@@ -590,7 +593,6 @@ export function aggregateMultiWindowUsage({
     allEntriesToAggregate.push({
       cascadeId: groupCascadeId,
       appSource: entry?.appSource || 'standalone',
-      accountName: entry?.accountName || extMatch?.accountName || '',
       steps: entry?.steps || [],
       isCurrentConv: familySet.has(cidLower),
     });
@@ -604,7 +606,6 @@ export function aggregateMultiWindowUsage({
     allEntriesToAggregate.push({
       cascadeId: extCidLower,
       appSource: ext.appSource || 'ide',
-      accountName: ext.accountName || liveEntry?.accountName || '',
       steps: ext.steps || [],
       isCurrentConv: familySet.has(extCidLower),
     });
@@ -618,14 +619,12 @@ export function aggregateMultiWindowUsage({
   const windows = [selectedWindow, ...Object.values(presetWindows), ...quotaWindows];
   const snapshot = lastUsageSnapshot;
   const sameSnapshot = modelInputs && snapshot && timeZone === snapshot.timeZone &&
-    currentYear === snapshot.currentYear &&
-    normalizedQuotaAccount === snapshot.normalizedQuotaAccount &&
-    modelInputs.catalogRevision === snapshot.modelInputs.catalogRevision &&
+    currentYear === snapshot.currentYear && modelInputs.catalogRevision === snapshot.modelInputs.catalogRevision &&
     isDeepStrictEqual(modelInputs.dynamicModelMap, snapshot.modelInputs.dynamicModelMap) &&
     sameUsageEntries(snapshot.entries, allEntriesToAggregate);
   const previous = sameSnapshot ? snapshot.ranges.get(selectedWindow.key) : null;
   if (previous) {
-    // 时钟继续前进，只有实际有步骤跨过窗口边界时才重新聚合。
+    
     const trend = planUsageTrend(selectedWindow, nowMs, previous.earliest, previous.latest);
     if (
       trend.hourly === previous.trend.hourly && trend.first === previous.trend.first &&
@@ -641,19 +640,11 @@ export function aggregateMultiWindowUsage({
 
   for (const entry of allEntriesToAggregate) {
     const { cascadeId, isCurrentConv } = entry;
-    const entryOwner = normalizeOwnerAccount(entry.accountName);
     const srcKey = entry.appSource || 'standalone';
     const srcName = SOURCE_LABELS[srcKey] || `Antigravity (${srcKey})`;
 
     for (const st of entry.steps || []) {
       if (!st || typeof st !== 'object') continue;
-      const stepOwner = normalizeOwnerAccount(st.accountName) || entryOwner;
-      const includeInQuotaPools =
-        normalizedQuotaAccount === null
-          ? false
-          : normalizedQuotaAccount === ''
-            ? true
-            : stepOwner === normalizedQuotaAccount;
       const mInfo = resolveStepModel(st);
       const inTok = safeTok(st.inputTokens);
       const cacheTok = safeTok(st.cacheReadTokens);
@@ -674,24 +665,20 @@ export function aggregateMultiWindowUsage({
       const stepUsage = { inTok, cacheTok, outTok, thinkTok, respTok, stepTotalTokens,
         resolvedCost, savedCost, unpriced };
 
-      if (tMs >= yearStartMs && tMs < nextYearStartMs) {
-        let monthIdx = 11;
-        for (let m = 0; m < 12; m++) {
-          if (tMs < monthBoundsMs[m + 1]) {
-            monthIdx = m;
-            break;
+      if (tMs > 0) {
+        const stepDate = new Date(tMs);
+        if (stepDate.getFullYear() === currentYear) {
+          const mBucket = monthlySeries[stepDate.getMonth()];
+          if (mBucket) {
+            mBucket.calls += 1;
+            mBucket.inputTokens += inTok;
+            mBucket.cacheReadTokens += cacheTok;
+            mBucket.responseTokens += respTok;
+            mBucket.thinkingTokens += thinkTok;
+            mBucket.totalTokens += stepTotalTokens;
+            mBucket.costUsd += resolvedCost;
+            mBucket.unpricedCalls = (mBucket.unpricedCalls || 0) + unpriced;
           }
-        }
-        const mBucket = monthlySeries[monthIdx];
-        if (mBucket) {
-          mBucket.calls += 1;
-          mBucket.inputTokens += inTok;
-          mBucket.cacheReadTokens += cacheTok;
-          mBucket.responseTokens += respTok;
-          mBucket.thinkingTokens += thinkTok;
-          mBucket.totalTokens += stepTotalTokens;
-          mBucket.costUsd += resolvedCost;
-          mBucket.unpricedCalls = (mBucket.unpricedCalls || 0) + unpriced;
         }
       }
 
@@ -702,13 +689,10 @@ export function aggregateMultiWindowUsage({
           if (isCurrentConv) {
             accumulateStepIntoBucket(sessionBuckets[k], stepUsage, cascadeId);
           }
-          if (k === 'week' && includeInQuotaPools) {
-            accumulateStepIntoBucket(quotaWeekBucket, stepUsage, cascadeId);
-          }
         }
       }
 
-      if (includeInQuotaPools && poolCycleBuckets.size > 0 && tMs > 0 && tMs <= nowMs) {
+      if (poolCycleBuckets.size > 0 && tMs > 0 && tMs <= nowMs) {
         let cachedPool = poolByModel.get(mInfo);
         if (!cachedPool || cachedPool.key !== st.modelKey ||
             cachedPool.response !== st.responseModel || cachedPool.displayName !== st.modelDisplayName) {
@@ -791,11 +775,10 @@ export function aggregateMultiWindowUsage({
     mBucket.costUsd = +mBucket.costUsd.toFixed(4);
   }
 
-  // 构建当前选定时间窗口的自适应自然整点/整日趋势序列 (trendSeries)
+  // / (trendSeries)
   const trend = planUsageTrend(selectedWindow, nowMs, earliestSelectedStepMs, latestSelectedStepMs);
   const { start: trendStartMs, end: trendEndMs, hourly: useHourly } = trend;
   const pad2 = (n) => String(n).padStart(2, '0');
-  const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
   const trendSeries = [];
   if (useHourly) {
@@ -830,9 +813,11 @@ export function aggregateMultiWindowUsage({
       if (Number.isNaN(sd.getTime())) continue;
       const hh = `${pad2(sd.getHours())}:00`;
       const endHh = `${pad2(ed.getHours())}:00`;
-      const dateStr = `${sd.getMonth() + 1}/${pad2(sd.getDate())}`;
+      const mm = pad2(sd.getMonth() + 1);
+      const dd = pad2(sd.getDate());
+      const dateStr = `${sd.getMonth() + 1}/${dd}`;
       const axisLabel = isSameDay ? hh : `${dateStr} ${hh}`;
-      const fullLabel = `${sd.getMonth() + 1}月${sd.getDate()}日 ${hh} - ${endHh}`;
+      const fullLabel = `${mm}-${dd} ${hh} - ${endHh}`;
       trendSeries.push({
         index: idx,
         startMs: sMs,
@@ -881,9 +866,10 @@ export function aggregateMultiWindowUsage({
       const eMs = endCursor.getTime();
 
       const sd = new Date(sMs);
-      const axisLabel = `${sd.getMonth() + 1}/${pad2(sd.getDate())}`;
-      const datePrefix = showFullYear ? `${sd.getFullYear()}年` : '';
-      const fullLabel = `${datePrefix}${sd.getMonth() + 1}月${sd.getDate()}日 (${WEEKDAY_NAMES[sd.getDay()]})`;
+      const mm = pad2(sd.getMonth() + 1);
+      const dd = pad2(sd.getDate());
+      const axisLabel = `${sd.getMonth() + 1}/${dd}`;
+      const fullLabel = showFullYear ? `${sd.getFullYear()}-${mm}-${dd}` : `${mm}-${dd}`;
 
       trendSeries.push({
         index: i,
@@ -915,7 +901,7 @@ export function aggregateMultiWindowUsage({
       } else if (item.tMs >= previousBucket.startMs && item.tMs < previousBucket.endMs) {
         targetIdx = previousBucketIndex;
       } else {
-        // 二分查找匹配的时间桶 [startMs, endMs)
+        // [startMs, endMs)
         let lo = 0;
         let hi = lastIdx;
         while (lo <= hi) {
@@ -968,7 +954,6 @@ export function aggregateMultiWindowUsage({
 
   const todayBucket = finalizedPresets.today.account;
   const weekBucket = finalizedPresets.week.account;
-  const finalizedQuotaWeekBucket = finalizeUsageBucket(quotaWeekBucket);
   const modelBreakdown = finalizeModelBreakdownMap(perModelStats);
 
   const formatCycleSummary = (b) => {
@@ -1022,7 +1007,6 @@ export function aggregateMultiWindowUsage({
     monthlySeries,
     todayBucket,
     weekBucket,
-    quotaWeekBucket: finalizedQuotaWeekBucket,
     modelBreakdown,
     poolCycleStats,
     poolsWeeklySummary,
@@ -1030,13 +1014,7 @@ export function aggregateMultiWindowUsage({
   if (modelInputs) {
     if (!sameSnapshot) {
       lastUsageSnapshot = {
-        timeZone,
-        modelInputs,
-        currentYear,
-        normalizedQuotaAccount,
-        entries: allEntriesToAggregate,
-        dates: null,
-        ranges: new Map(),
+        timeZone, modelInputs, currentYear, entries: allEntriesToAggregate, dates: null, ranges: new Map(),
       };
     }
     const { ranges } = lastUsageSnapshot;
@@ -1044,7 +1022,7 @@ export function aggregateMultiWindowUsage({
     ranges.set(selectedWindow.key, {
       windows, trend, result, earliest: earliestSelectedStepMs, latest: latestSelectedStepMs,
     });
-    // 侧栏和悬浮窗可同时查看不同范围，共用时间索引并最多保留两份聚合结果。
+    
     if (ranges.size > 2) ranges.delete(ranges.keys().next().value);
   }
   return result;

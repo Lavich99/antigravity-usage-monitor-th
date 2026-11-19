@@ -3,22 +3,15 @@
  * USD estimates, countdown timers, and custom datetime displays.
  */
 
-import { isEnglishLocale, t } from '../i18n/index.js';
-import {
-  normalizeModelDisplayMode,
-  normalizeOrchestratorIdMode,
-} from '../../shared/settings-normalization.mjs';
-import {
-  classifyCacheTier,
-  classifySpeedTier,
-  classifyStepCostTier,
-  classifyTtftTier,
-  formatCompactTokens,
-} from '../../shared/telemetry-display-rules.mjs';
+import { isEnglishLocale, isThaiLocale, t } from '../i18n/index.js';
 
 const EN_MONTH_SHORT = Object.freeze([
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+]);
+const TH_MONTH_SHORT = Object.freeze([
+  'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+  'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
 ]);
 
 export function formatMetric(value, unit = '') {
@@ -32,24 +25,53 @@ export function formatCachePct(value) {
 }
 
 export function getSpeedToneClass(tokPerSec) {
-  return `tone-${classifySpeedTier(tokPerSec)}`;
+  if (tokPerSec == null || !Number.isFinite(Number(tokPerSec)) || Number(tokPerSec) <= 0) {
+    return 'tone-muted';
+  }
+  const v = Number(tokPerSec);
+  if (v >= 60) return 'tone-good';
+  if (v >= 35) return 'tone-info';
+  if (v >= 20) return 'tone-warn';
+  return 'tone-danger';
 }
 
 export function getCacheToneClass(cacheHitPct, promptTokens = null) {
-  return `tone-${classifyCacheTier(cacheHitPct, promptTokens)}`;
+  if (cacheHitPct == null || !Number.isFinite(Number(cacheHitPct))) {
+    return 'tone-muted';
+  }
+  const v = Number(cacheHitPct);
+  if (promptTokens != null && Number(promptTokens) <= 0 && v <= 0) {
+    return 'tone-muted';
+  }
+  if (v >= 85) return 'tone-good';
+  if (v >= 65) return 'tone-info';
+  if (v >= 30) return 'tone-warn';
+  return 'tone-danger';
 }
 
 export function getStepCostToneClass(costUsd) {
-  const tier = classifyStepCostTier(costUsd);
-  return tier ? `tone-${tier}` : '';
+  if (costUsd == null || !Number.isFinite(Number(costUsd))) return '';
+  const v = Number(costUsd);
+  if (v >= 0.3) return 'tone-danger';
+  if (v >= 0.15) return 'tone-warn';
+  return '';
 }
 
 export function getTtftToneClass(ttftSec) {
-  const tier = classifyTtftTier(ttftSec);
-  return tier === 'warn' || tier === 'danger' ? `tone-${tier}` : '';
+  if (ttftSec == null || !Number.isFinite(Number(ttftSec)) || Number(ttftSec) < 0) return '';
+  const v = Number(ttftSec);
+  if (v >= 30) return 'tone-danger';
+  if (v >= 18) return 'tone-warn';
+  return '';
 }
 
-export const formatTokens = formatCompactTokens;
+export function formatTokens(num) {
+  const n = Number(num || 0);
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(Math.round(n));
+}
 
 export function formatTokensPrecise(num) {
   const n = Number(num || 0);
@@ -60,28 +82,39 @@ export function formatTokensPrecise(num) {
   return String(Math.round(n));
 }
 
-export function formatCnyApprox(usdAmount, rate = 7.2) {
-  const rmb = Number(usdAmount || 0) * rate;
-  if (rmb <= 0) return '≈ ¥0';
-  if (rmb >= 10) return `≈ ¥${Math.round(rmb)}`;
-  return `≈ ¥${rmb.toFixed(1)}`;
+const DEFAULT_THB_RATE = 33.95;
+
+function formatApproxCurrency(usdAmount, symbol, rate) {
+  const converted = Number(usdAmount || 0) * rate;
+  if (converted <= 0) return `≈ ${symbol}0`;
+  if (converted >= 10) return `≈ ${symbol}${Math.round(converted)}`;
+  return `≈ ${symbol}${converted.toFixed(1)}`;
+}
+
+export function formatCnyApprox(usdAmount, rate = undefined) {
+  const resolvedRate = rate !== undefined && rate !== null && Number.isFinite(Number(rate)) && Number(rate) > 0
+    ? Number(rate)
+    : DEFAULT_THB_RATE;
+  return formatApproxCurrency(usdAmount, '฿', resolvedRate);
 }
 
 export function formatDateSpanBadge(startMs, endMs) {
   const s = startMs && Number.isFinite(startMs) ? new Date(startMs) : new Date();
   const e = endMs && Number.isFinite(endMs) ? new Date(endMs) : new Date();
-  if (isEnglishLocale()) {
-    const sMon = EN_MONTH_SHORT[s.getMonth()] || '';
-    const eMon = EN_MONTH_SHORT[e.getMonth()] || '';
+  if (isThaiLocale()) {
+    const sMon = TH_MONTH_SHORT[s.getMonth()] || '';
+    const eMon = TH_MONTH_SHORT[e.getMonth()] || '';
     if (s.getFullYear() !== e.getFullYear()) {
-      return `${sMon} ${s.getDate()}, ${s.getFullYear()} ~ ${eMon} ${e.getDate()}, ${e.getFullYear()}`;
+      return `${s.getDate()} ${sMon} ${s.getFullYear()} ~ ${e.getDate()} ${eMon} ${e.getFullYear()}`;
     }
-    return `${sMon} ${s.getDate()} ~ ${eMon} ${e.getDate()}`;
+    return `${s.getDate()} ${sMon} ~ ${e.getDate()} ${eMon}`;
   }
+  const sMon = EN_MONTH_SHORT[s.getMonth()] || '';
+  const eMon = EN_MONTH_SHORT[e.getMonth()] || '';
   if (s.getFullYear() !== e.getFullYear()) {
-    return `${s.getFullYear()}年${s.getMonth() + 1}月${s.getDate()}日 ~ ${e.getFullYear()}年${e.getMonth() + 1}月${e.getDate()}日`;
+    return `${sMon} ${s.getDate()}, ${s.getFullYear()} ~ ${eMon} ${e.getDate()}, ${e.getFullYear()}`;
   }
-  return `${s.getMonth() + 1}月${s.getDate()}日 ~ ${e.getMonth() + 1}月${e.getDate()}日`;
+  return `${sMon} ${s.getDate()} ~ ${eMon} ${e.getDate()}`;
 }
 
 export function formatUsd(amount, { precise = false } = {}) {
@@ -154,10 +187,26 @@ export function formatElapsedSec(seconds) {
   return `${h}h ${remM}m`;
 }
 
-export { normalizeModelDisplayMode };
+/**
+ * `'short'` | `'upstream_compact'` ID | `'upstream'` ID 
+ *
+ * @param {unknown} mode
+ * @param {unknown} [legacyShowUpstream]
+ * @returns {'short'|'upstream_compact'|'upstream'}
+ */
+export function normalizeModelDisplayMode(mode, legacyShowUpstream) {
+  const m = String(mode ?? '').trim().toLowerCase();
+  if (m === 'upstream' || m === 'raw' || m === 'full') return 'upstream';
+  if (m === 'upstream_compact' || m === 'compact_upstream' || m === 'trimmed') {
+    return 'upstream_compact';
+  }
+  if (m === 'short') return 'short';
+  if (legacyShowUpstream === true) return 'upstream';
+  return 'short';
+}
 
 /**
- * 隐藏原始模型 ID 开头的 `gemini-`、`claude-`、`gpt-` 厂商前缀以节省单行表格空间（确保剥离后非空）。
+ * ID `gemini-` `claude-` `gpt-` 
  *
  * @param {string} rawText
  * @returns {string}
@@ -170,21 +219,29 @@ export function stripVendorModelPrefix(rawText) {
 
 function stripCompactionMarker(rawText) {
   return String(rawText || '')
-    .replace(/(?:·(?:压缩|compact)|\[自动压缩\]|\[auto[- ]?compact\])\s*$/iu, '')
+    .replace(/(?:·compact|\[auto[- ]?compact\])\s*$/iu, '')
     .trim();
 }
 
-export const normalizeOrchestratorIdDisplayMode = normalizeOrchestratorIdMode;
+/**
+ * Orchestrator ID `'compact'` vs `'full'` ID `'compact'` 
+ *
+ * @param {unknown} mode
+ * @returns {'compact'|'full'}
+ */
+export function normalizeOrchestratorIdDisplayMode(mode) {
+  return String(mode ?? '').trim().toLowerCase() === 'full' ? 'full' : 'compact';
+}
 
 /**
- * 统一解析步骤、会话摘要或模型汇总行面向用户的模型显示文本与悬停提示。
+ * 
  *
- * 规则：
- * - Orchestrator 系列（`Orchestrator (Carbon)`、`Orchestrator (Argon)`、`gemini-flash-worker-agy` / `M669`）
- *   独立遵循 `orchestratorIdMode`（`'compact'` 显示 `orchestrator-carbon` / `orchestrator-argon` / `worker-agy-hydrogen`；
- *   `'full'` 显示带括号标注的完整上游 ID），不受普通模型显示模式影响；
- * - 其余普通模型遵循 `modelDisplayMode`（`'short'` | `'upstream_compact'` | `'upstream'`，兼容旧版布尔 `showUpstreamModel`）；
- * - 独立拆分 `baseText` 与 `compactionSuffix`（`·压缩`），供步骤表单独保护压缩尾标永不截断。
+ * 
+ * - Orchestrator `Orchestrator (Carbon)` `Orchestrator (Argon)` `gemini-flash-worker-agy` / `M669` 
+ * `orchestratorIdMode` `'compact'` `orchestrator-carbon` / `orchestrator-argon` / `worker-agy-hydrogen` 
+ * `'full'` ID 
+ * - `modelDisplayMode` `'short'` | `'upstream_compact'` | `'upstream'` `showUpstreamModel` 
+ * - `baseText` `compactionSuffix` `· ` 
  *
  * @param {object|null|undefined} target
  * @param {{ modelDisplayMode?: string, showUpstreamModel?: boolean, orchestratorIdMode?: string }|boolean} [settings]
@@ -217,35 +274,23 @@ export function resolveModelDisplayInfo(target, settings = {}, options = {}) {
   }
 
   const shortText = String(
-    target.activeBaseModelShort ??
-      target.baseModelShort ??
-      target.activeModelShort ??
-      target.modelShort ??
-      target.shortName ??
-      ''
+    target.activeModelShort ?? target.modelShort ?? target.shortName ?? ''
   ).trim();
   const labelText = String(
-    target.activeBaseModelLabel ??
-      target.baseModelLabel ??
-      target.activeModelLabel ??
-      target.modelLabel ??
-      target.label ??
-      ''
+    target.activeModelLabel ?? target.modelLabel ?? target.label ?? ''
   ).trim();
   const upstreamText = String(
-    target.baseModelUpstream ??
-      target.activeModelUpstream ??
-      target.modelUpstream ??
-      target.upstreamName ??
-      ''
+    target.activeModelUpstream ?? target.modelUpstream ?? target.upstreamName ?? ''
   ).trim();
-  const rawCompactionText = `${target.activeModelShort ?? target.modelShort ?? ''} ${target.activeModelLabel ?? target.modelLabel ?? ''} ${target.activeModelUpstream ?? target.modelUpstream ?? ''}`;
   const responseText = String(target.responseModel ?? '').trim();
   const modelKeyText = String(target.modelKey ?? '').trim();
 
   const isCompaction =
     Boolean(target.isCompactionStep) ||
-    /·(?:压缩|compact)(?=\s|$)|\[自动压缩\]/iu.test(rawCompactionText);
+    /·compact\s*$/iu.test(shortText) ||
+    /·compact\s*$/iu.test(upstreamText) ||
+    /·compact\s*$/iu.test(labelText) ||
+    /\[auto[- ]?compact\]\s*$/iu.test(labelText);
 
   const compactionSuffix = isCompaction ? t('fmt.compactionSuffix') : '';
 
@@ -256,7 +301,7 @@ export function resolveModelDisplayInfo(target, settings = {}, options = {}) {
     );
   const isOrchSeries =
     isOrchWorker ||
-    /\bgemini-pro-orchestrator(?:-argon)?\b|\borchestrator-(?:carbon|argon)\b|\borch-(?:carbon|argon)(?:·压缩)?(?=\s|$)|Orchestrator\s*\((?:Carbon|Argon)\)|\bMODEL_PLACEHOLDER_M(?:667|681)\b/i.test(
+    /\bgemini-pro-orchestrator(?:-argon)?\b|\borchestrator-(?:carbon|argon)\b|\borch-(?:carbon|argon)(?:·compact)?(?=\s|$)|Orchestrator\s*\((?:Carbon|Argon)\)|\bMODEL_PLACEHOLDER_M(?:667|681)\b/i.test(
       combined
     );
 
@@ -293,7 +338,9 @@ export function resolveModelDisplayInfo(target, settings = {}, options = {}) {
       : preferLabelInShort
         ? labelText || shortText
         : shortText || labelText) || fallback;
-  const cleanRawBase = stripCompactionMarker(rawSelected) || fallback;
+  const rawBaseTrimmed = stripCompactionMarker(rawSelected);
+  const cleanRawBase =
+    (rawBaseTrimmed && rawBaseTrimmed !== 'Unknown Model' ? rawBaseTrimmed : '') || fallback;
   const baseText =
     modelDisplayMode === 'upstream_compact'
       ? stripVendorModelPrefix(cleanRawBase) || cleanRawBase
@@ -317,9 +364,9 @@ export function resolveModelDisplayInfo(target, settings = {}, options = {}) {
 }
 
 /**
- * 按当前显示策略 (`resolveModelDisplayInfo`) 解析出的最终展示名称对模型统计列表执行二次去重归并，
- * 确保当多个外层模型槽位映射到同一展示名（例如切换至“原始模型 ID”后共享同一 `upstreamName`）时，
- * 不会在排行榜或总览中出现重复同名行，同时完整累加 Token、调用次数、未定价计数与速度/首字加权均值。
+ * (`resolveModelDisplayInfo`) 
+ * “ ID” `upstreamName` 
+ * Token / 
  *
  * @param {object[]} [models=[]]
  * @param {object|boolean} [settings={}]
@@ -481,132 +528,4 @@ export function mergeModelsByDisplayName(models = [], settings = {}, options = {
       sourceLabels: acc.sourceLabels,
     };
   });
-}
-
-/**
- * 根据代理索引返回对应的微边框语义徽章样式类名。
- *
- * @param {number} [index=0]
- * @param {boolean} [isMain=false]
- * @returns {string}
- */
-export function getAgentBadgeClass(index = 0, isMain = false) {
-  if (isMain || index <= 0) return 'badge-main';
-  const slot = ((index - 1) % 3) + 1;
-  return `badge-sub-${slot}`;
-}
-
-/**
- * 基于结构化 `agentKind` / `agentOrdinal` 格式化主/子代理或旁路提问的紧凑徽章文本（零正则反拆中文）。
- *
- * @param {object|null|undefined} agent
- * @returns {string}
- */
-export function formatAgentBadgeText(agent) {
-  if (!agent) return t('fmt.mainBadge');
-  const kind =
-    agent.agentKind ||
-    (agent.isMain
-      ? 'main'
-      : agent.isSideQuestion || agent.typeName === 'side_question'
-        ? 'side_question'
-        : 'subagent');
-  if (kind === 'all') return t('header.scopeAllShort');
-  if (kind === 'main') return t('fmt.mainBadge');
-  if (kind === 'side_question') {
-    const ord = Number(agent.agentOrdinal || agent.sideIndex || 0);
-    if (ord > 0) return t('fmt.sideBadge', { index: ord });
-    if (!isEnglishLocale() && agent.badgeText) return String(agent.badgeText);
-    return t('fmt.sideBadgeShort');
-  }
-  const ord = Number(agent.agentOrdinal || agent.index || 0);
-  if (ord > 0) return t('fmt.subBadge', { index: ord });
-  if (!isEnglishLocale() && agent.badgeText) return String(agent.badgeText);
-  return t('fmt.subBadgeShort');
-}
-
-/**
- * 基于结构化 `agentKind` / `agentOrdinal` / `customRole` 格式化代理完整显示名称（零正则反拆中文）。
- *
- * @param {object|null|undefined} agent
- * @returns {string}
- */
-export function formatAgentLabel(agent) {
-  if (!agent) return t('fmt.mainAgent');
-  const kind =
-    agent.agentKind ||
-    (agent.isMain
-      ? 'main'
-      : agent.isSideQuestion || agent.typeName === 'side_question'
-        ? 'side_question'
-        : 'subagent');
-  if (kind === 'all') return t('header.scopeAll');
-  if (kind === 'main') return t('fmt.mainAgent');
-
-  const rawCustom =
-    agent.customRole !== undefined
-      ? String(agent.customRole || '').trim()
-      : String(agent.role || '').trim();
-  if (kind === 'side_question') {
-    const ord = Number(agent.agentOrdinal || agent.sideIndex || 0);
-    const baseLabel = ord > 0 ? `${t('fmt.sideQuestion')} #${ord}` : t('fmt.sideQuestion');
-    const isGeneric =
-      !rawCustom ||
-      rawCustom === baseLabel ||
-      rawCustom === agent.shortLabel ||
-      rawCustom === t('fmt.sideQuestion') ||
-      rawCustom === 'Side Question' ||
-      rawCustom === 'side_question';
-    return isGeneric ? baseLabel : `${baseLabel} · ${rawCustom}`;
-  }
-
-  const ord = Number(agent.agentOrdinal || agent.index || 0);
-  const baseLabel = ord > 0 ? `${t('fmt.subAgent')} #${ord}` : t('fmt.subAgent');
-  const isGeneric =
-    !rawCustom ||
-    rawCustom === baseLabel ||
-    rawCustom === agent.shortLabel ||
-    rawCustom === t('fmt.subAgent') ||
-    rawCustom === 'Subagent';
-  return isGeneric ? baseLabel : `${baseLabel} · ${rawCustom}`;
-}
-
-/**
- * 基于后端结构化 `actionKey` + `waitingApproval` 渲染实时动作短标题（兼容自定义 `label` 回退）。
- *
- * @param {object|null|undefined} act
- * @param {string} [fallbackKey='live.thinking']
- * @returns {string}
- */
-export function formatLiveActivityLabel(act, fallbackKey = 'live.thinking') {
-  if (!act || typeof act !== 'object') return t(fallbackKey);
-  let baseLabel = '';
-  if (act.actionKey) {
-    const i18nKey = `live.act.${act.actionKey}`;
-    const translated = t(i18nKey);
-    if (translated && translated !== i18nKey) {
-      baseLabel = translated;
-    }
-  }
-  if (!baseLabel) {
-    baseLabel = String(act.label || '').trim() || t(fallbackKey);
-  }
-  if (act.waitingApproval) {
-    return t('live.act.awaitingApproval', { label: baseLabel });
-  }
-  return baseLabel;
-}
-
-/**
- * 基于后端结构化 `detailKey` 渲染实时动作补充说明（兼容自由文本 `detail`）。
- *
- * @param {object|null|undefined} act
- * @returns {string}
- */
-export function formatLiveActivityDetail(act) {
-  if (!act || typeof act !== 'object') return '';
-  if (act.detailKey === 'compaction_resuming') {
-    return t('live.act.compactionResuming');
-  }
-  return String(act.detail || '');
 }

@@ -1,11 +1,11 @@
 /*
- * 模块化偏好设置样式表 (views-settings.css).
- * 包含：
- * 1. 顶部偏好设置切换导航条 (.settings-view-root, .settings-subnav-bar)
- * 2. 主题强调色色卡选择器 (.theme-color-picker, .theme-host-chip, .theme-swatch-btn)
- * 3. 结构页手风琴折叠面板 (.collapsible-section, .collapsible-trigger, .collapsible-body)
- * 4. 通用 + / - / ↑ / ↓ 自添加排序列表 (.editable-slot-list, .editable-slot-row, .slot-add-btn)
- * 5. 其他页维护操作行与二次确认危险态按钮 (.settings-action-row, .btn-danger-confirm)
+ * (views-settings.css).
+ * 
+ * 1. (.settings-view-root, .settings-subnav-bar)
+ * 2. (.theme-color-picker, .theme-host-chip, .theme-swatch-btn)
+ * 3. (.collapsible-section, .collapsible-trigger, .collapsible-body)
+ * 4. + / - / ↑ / ↓ (.editable-slot-list, .editable-slot-row, .slot-add-btn)
+ * 5. (.settings-action-row, .btn-danger-confirm)
  */
 
 .settings-view-root {
@@ -37,12 +37,12 @@
 }
 
 .settings-subnav-bar .seg-btn {
-  min-height: calc(24px * var(--ui-font-scale, 1));
+  height: 24px;
   font-size: var(--fs-base-sm);
   font-weight: 500;
 }
 
-/* --- 结构页三级子导航菜单 (.settings-thirdnav-bar) --- */
+/* --- (.settings-thirdnav-bar) --- */
 .settings-thirdnav-bar {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -55,9 +55,9 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: calc(25px * var(--ui-font-scale, 1));
+  height: 25px;
   min-width: 0;
-  padding: 2px 6px;
+  padding: 0 6px;
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
   background: var(--surface-subtle);
@@ -98,13 +98,96 @@
   padding-bottom: 2px;
 }
 
+/* Custom Offline Model Pricing Form & List */
+.custom-price-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+.custom-price-rates-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.custom-price-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.custom-price-input {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  outline: none;
+  box-sizing: border-box;
+}
+.custom-price-input:focus {
+  border-color: var(--accent-primary-border);
+  background: var(--surface-panel);
+}
+.custom-price-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.custom-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-subtle);
+}
+.custom-price-row-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.custom-price-row-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-price-row-meta {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-price-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.custom-price-mini-btn {
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+}
+
 .settings-hint-text {
   font-size: var(--fs-sm);
   line-height: 1.4;
   color: var(--text-muted);
 }
 
-/* --- 主题色色卡选择器 (ThemeColorPicker) --- */
+/* --- (ThemeColorPicker) --- */
 .theme-color-picker {
   display: flex;
   align-items: center;
@@ -116,8 +199,8 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px 9px;
+  height: 24px;
+  padding: 0 9px;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--text-secondary);
@@ -183,7 +266,7 @@
   stroke-width: 2.5;
 }
 
-/* --- 手风琴折叠面板 (CollapsibleSection) --- */
+/* --- (CollapsibleSection) --- */
 .collapsible-section {
   gap: 0;
   padding: 0;
@@ -230,13 +313,17 @@
   font-weight: 600;
 }
 
-/* --- 结构页真实 UI 实时预览画布（1:1 零缩放、零套娃外框，直接呈现真实组件） --- */
+/* --- UI --- */
 .structure-preview-canvas {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
+}
+
+.structure-preview-canvas.is-scaled {
+  zoom: 0.86;
 }
 
 .wm-hover-tip.is-preview {
@@ -256,7 +343,10 @@
 }
 
 .overview-modules-host.is-preview {
-  padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .structure-preview-empty,
@@ -279,7 +369,6 @@
 }
 
 .preview-capsule-bar {
-  --ui-font-scale: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -289,10 +378,6 @@
   background: var(--surface-bg);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
-  font-family: "Google Sans Flex", "Google Sans", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  font-variant-numeric: tabular-nums;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   overflow-x: auto;
   user-select: none;
 }
@@ -365,6 +450,21 @@
   white-space: nowrap;
 }
 
+.preview-win-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 4px;
+  flex-shrink: 0;
+}
+
+.preview-win-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-secondary) 26%, transparent);
+}
+
 .preview-composer-send {
   display: inline-flex;
   align-items: center;
@@ -414,8 +514,8 @@
 .collapsible-badge {
   display: inline-flex;
   align-items: center;
-  min-height: calc(18px * var(--ui-font-scale, 1));
-  padding: 1px 6px;
+  height: 18px;
+  padding: 0 6px;
   font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-secondary);
@@ -446,7 +546,7 @@
   margin: 2px 0;
 }
 
-/* --- 通用可增删排序槽位列表 (EditableSlotList) --- */
+/* --- (EditableSlotList) --- */
 .editable-slot-wrap {
   display: flex;
   flex-direction: column;
@@ -560,8 +660,8 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px 9px;
+  height: 24px;
+  padding: 0 9px;
   font-size: var(--fs-md);
   font-weight: 500;
   color: var(--accent-primary);
@@ -583,7 +683,7 @@
   cursor: default;
 }
 
-/* --- 其他页：维护操作行 --- */
+/* --- --- */
 .settings-action-block {
   display: flex;
   align-items: center;
@@ -694,8 +794,8 @@
 .settings-text-input {
   width: 100%;
   min-width: 0;
-  min-height: calc(28px * var(--ui-font-scale, 1));
-  padding: 2px 8px;
+  height: 28px;
+  padding: 0 8px;
   background: var(--surface-subtle);
   border: 1px solid var(--border-hairline);
   border-radius: var(--radius-xs);
@@ -721,7 +821,7 @@
 }
 
 .settings-number-wrap .number-input {
-  min-height: calc(24px * var(--ui-font-scale, 1));
+  height: 24px;
   background: var(--surface-subtle);
 }
 
@@ -744,7 +844,7 @@
   color: var(--text-secondary);
 }
 
-/* --- 其他页：模型上下文设置风险警告遮罩 --- */
+/* --- --- */
 .ctx-risk-stage {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -814,148 +914,7 @@
 
 .ctx-risk-accept-btn {
   margin-top: 2px;
-  min-height: calc(26px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-3);
+  height: 26px;
+  padding: 0 var(--space-3);
   font-size: var(--fs-md);
-}
-
-/* --- CDP / 双栖桥接端口诊断与一键重拉卡片 (.settings-bridge-notice) --- */
-.app-bridge-banner-slot {
-  padding: 0 var(--space-4) var(--space-2);
-  flex-shrink: 0;
-}
-
-.app-bridge-banner-slot[hidden] {
-  display: none !important;
-}
-
-.settings-bridge-notice {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 5px;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-xs);
-  border: 1px solid color-mix(in srgb, var(--metric-warn) 42%, var(--border-hairline));
-  background: color-mix(in srgb, var(--surface-panel) 89%, var(--metric-warn) 7%);
-}
-
-.settings-bridge-notice.is-restart {
-  border-color: color-mix(in srgb, var(--metric-info) 42%, var(--border-hairline));
-  background: color-mix(in srgb, var(--surface-panel) 89%, var(--metric-info) 7%);
-}
-
-.settings-bridge-notice[hidden] {
-  display: none !important;
-}
-
-.settings-bridge-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-  color: var(--metric-warn);
-}
-
-.settings-bridge-head-main {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.settings-bridge-notice.is-restart .settings-bridge-head,
-.settings-bridge-notice.is-restart .settings-bridge-icon,
-.settings-bridge-notice.is-restart .settings-bridge-title {
-  color: var(--metric-info);
-}
-
-.settings-bridge-icon {
-  color: var(--metric-warn);
-  flex-shrink: 0;
-}
-
-.settings-bridge-title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  line-height: 1.35;
-  color: var(--metric-warn);
-}
-
-.settings-bridge-dismiss-btn {
-  padding: 2px 4px;
-  min-height: 20px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.settings-bridge-desc {
-  margin: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.48;
-  color: var(--text-primary);
-  word-break: break-word;
-}
-
-.settings-bridge-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.settings-bridge-relaunch-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-3);
-  border-radius: var(--radius-xs);
-  border: 1px solid var(--accent-primary-border);
-  background: var(--accent-primary-soft);
-  color: var(--accent-primary);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  cursor: pointer;
-  max-width: 100%;
-  transition:
-    background-color var(--dur-instant) var(--ease-fast),
-    opacity var(--dur-instant) var(--ease-fast);
-}
-
-.settings-bridge-relaunch-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
-}
-
-.settings-bridge-relaunch-btn:disabled {
-  opacity: 0.65;
-  cursor: wait;
-}
-
-.settings-bridge-relaunch-btn[hidden] {
-  display: none !important;
-}
-
-.settings-bridge-relaunch-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-bridge-copy-btn {
-  min-height: calc(24px * var(--ui-font-scale, 1));
-  padding: 2px var(--space-3);
-  font-size: var(--fs-xs);
-  font-family: var(--font-mono);
-  max-width: 100%;
-}
-
-.settings-bridge-copy-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

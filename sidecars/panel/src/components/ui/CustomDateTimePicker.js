@@ -13,9 +13,33 @@ import {
   patchText,
 } from '../../core/domPatch.js';
 import { formatCompactDateTime } from '../../core/formatters.js';
+import { isEnglishLocale, isThaiLocale } from '../../i18n/index.js';
 import { createSvgIcon } from '../../icons/SvgIcon.js';
 
-const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+function getPickerLocaleCopy() {
+  if (isThaiLocale()) {
+    return {
+      weekdays: ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'],
+      prevMonth: 'เดือนก่อน',
+      nextMonth: 'เดือนถัดไป',
+      timeLabel: 'ชม. / นาที',
+    };
+  }
+  if (isThaiLocale()) {
+    return {
+      weekdays: ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'],
+      prevMonth: 'เดือนก่อน',
+      nextMonth: 'เดือนถัดไป',
+      timeLabel: 'ชม. / นาที',
+    };
+  }
+  return {
+    weekdays: ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'],
+    prevMonth: 'Previous month',
+    nextMonth: 'Next month',
+    timeLabel: 'Hr / Min',
+  };
+}
 
 function buildCalendarDays(viewYear, viewMonth, selectedDate) {
   const firstDay = new Date(viewYear, viewMonth, 1);
@@ -71,12 +95,13 @@ export const CustomDateTimePicker = defineComponent({
     );
 
     const monthTitle = h('span', { className: 'text-mono' });
+    const initCopy = getPickerLocaleCopy();
     const prevMonthBtn = h(
       'button',
       {
         type: 'button',
         className: 'icon-btn',
-        'aria-label': '上个月',
+        'aria-label': initCopy.prevMonth,
         onClick: (e) => {
           e.stopPropagation();
           viewMonth -= 1;
@@ -95,7 +120,7 @@ export const CustomDateTimePicker = defineComponent({
       {
         type: 'button',
         className: 'icon-btn',
-        'aria-label': '下个月',
+        'aria-label': initCopy.nextMonth,
         onClick: (e) => {
           e.stopPropagation();
           viewMonth += 1;
@@ -111,11 +136,8 @@ export const CustomDateTimePicker = defineComponent({
 
     const navBar = h('div', { className: 'dt-nav' }, [prevMonthBtn, monthTitle, nextMonthBtn]);
 
-    const weekdayRow = h(
-      'div',
-      { className: 'dt-weekdays' },
-      WEEKDAYS.map((w) => h('span', { className: 'dt-weekday', text: w }))
-    );
+    const weekdaySpans = initCopy.weekdays.map((w) => h('span', { className: 'dt-weekday', text: w }));
+    const weekdayRow = h('div', { className: 'dt-weekdays' }, weekdaySpans);
 
     const daysGrid = h('div', { className: 'dt-days' });
 
@@ -135,8 +157,9 @@ export const CustomDateTimePicker = defineComponent({
       emit('update:modelValue', nextMs);
     }
 
+    const timeRowLabel = h('span', { className: 'text-muted', text: initCopy.timeLabel });
     const timeRow = h('div', { className: 'dt-time-row' }, [
-      h('span', { className: 'text-muted', text: '时 / 分' }),
+      timeRowLabel,
       h('div', { className: 'dt-time-controls' }, [
         h('div', { className: 'dt-mini-step' }, [
           h('button', {
@@ -217,6 +240,13 @@ export const CustomDateTimePicker = defineComponent({
     }
 
     function renderCalendar() {
+      const copy = getPickerLocaleCopy();
+      patchAttr(prevMonthBtn, 'aria-label', copy.prevMonth);
+      patchAttr(nextMonthBtn, 'aria-label', copy.nextMonth);
+      patchText(timeRowLabel, copy.timeLabel);
+      copy.weekdays.forEach((w, idx) => {
+        if (weekdaySpans[idx]) patchText(weekdaySpans[idx], w);
+      });
       const cur = new Date(getProps().modelValue || Date.now());
       const pad = (n) => String(n).padStart(2, '0');
       patchText(monthTitle, `${viewYear}-${pad(viewMonth + 1)}`);
