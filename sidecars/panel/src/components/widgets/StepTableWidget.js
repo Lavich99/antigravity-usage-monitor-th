@@ -13,6 +13,7 @@ import {
   patchKeyedList,
   patchText,
 } from '../../core/domPatch.js';
+import { formatStepDateTime } from '../../core/formatters.js';
 import { getEffectiveLocale, isEnglishLocale, t } from '../../i18n/index.js';
 import {
   DEFAULT_STEP_COLUMN_KEYS,
@@ -393,11 +394,18 @@ export const StepTableWidget = defineComponent({
             patchAttr(refs.railEl, 'class', `turn-rail${isLatest ? ' is-latest' : ''}${hasUp ? ' has-up' : ''}${hasDown ? ' has-down' : ''}${marker}`);
           }
 
-          const hoverTd = showRowRail && prompt ? firstTd : null;
+          const hoverStepActive = Boolean(firstTd && (firstColKey === 'step' || (showRowRail && prompt)));
+          const dateTimeStr = formatStepDateTime(st.createdAtMs);
+          const tipLines = [];
+          if (dateTimeStr) tipLines.push(dateTimeStr);
+          if (showRowRail && prompt) tipLines.push(prompt);
+          const tipText = tipLines.join('\n');
+          const hoverTd = hoverStepActive && tipText ? firstTd : null;
           if (refs.hoverTd !== hoverTd) clearCellHover(refs.hoverTd);
           refs.hoverTd = hoverTd;
           if (hoverTd) {
-            hoverRows.set(hoverTd, { badge: refs.agentBadgeEl, prompt });
+            patchAttr(hoverTd, 'title', null);
+            hoverRows.set(hoverTd, { badge: refs.agentBadgeEl, prompt: tipText });
             hoverTd.onmouseenter = firstColKey === 'step' ? enterStepCell : null;
             hoverTd.onmousemove = firstColKey === 'step' ? moveInStepCell : moveAlongTurnRail;
             hoverTd.onmouseleave = hideTurnTip;

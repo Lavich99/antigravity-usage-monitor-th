@@ -43,6 +43,7 @@ import {
   normalizeClientUpdateMode,
   normalizeClientWindowMountMode,
   resolveScopedConversation,
+  resolveSelectedModelContextLimit,
   startAsyncTelemetryLoop,
   stopAsyncTelemetryLoop,
   telemetryStore,
@@ -3241,19 +3242,78 @@ export function mountWindowOverlay() {
     return running.find((c) => String(c?.cascadeId || '').toLowerCase() === cidLower) || null;
   }
 
+  let quotaCyclePhase = '5h';
+  let quotaCycleInterval = null;
+  let quotaCycleFadeTimer = null;
+  let selectedModelSyncTimer = null;
+
+  function detectSelectedModelForSurface(surface, telemetry) {
+    if (!telemetry || !Array.isArray(telemetry.contextWindowModels) || !telemetry.contextWindowModels.length) {
+      return null;
+    }
+    const hostEl = surface?.capsuleHost;
+    const scopeRoot =
+      surface?.paneEl ||
+      hostEl?.closest?.('[data-cascade-id], form, [class*="composer"]') ||
+      hostEl?.parentElement?.parentElement ||
+      document.body;
+    if (!scopeRoot || typeof scopeRoot.querySelectorAll !== 'function') return null;
+
+    const btns = scopeRoot.querySelectorAll('button, [role="button"]');
+    for (let i = 0; i < btns.length; i += 1) {
+      const btn = btns[i];
+      if (!btn || isAnyOverlayHostNode(btn)) continue;
+      if (btn.getAttribute?.('data-testid') === 'permissions-selector-trigger') continue;
+      const text = cleanComposerButtonText(btn);
+      if (!text || text.length < 3 || text.length > 80) continue;
+      const resolved = resolveSelectedModelContextLimit(text, telemetry);
+      if (resolved) return resolved;
+    }
+    return null;
+  }
+
+  function applySelectedModelLimitToSlotCtx(slotCtx, selectedModel, totalTokens) {
+    if (!selectedModel || !(selectedModel.limitTokens > 0)) return slotCtx;
+    const limitTokens = selectedModel.limitTokens;
+    const usedTokens = Math.max(0, Number(totalTokens || 0));
+    const usedPct = Math.min(100, +((usedTokens / limitTokens) * 100).toFixed(2));
+    const dashOffset = +(RING_CIRCUMFERENCE * (1 - usedPct / 100)).toFixed(2);
+    const nextCtx = slotCtx.context
+      ? { ...slotCtx.context, totalTokens: usedTokens, limitTokens, compactionLimitTokens: limitTokens, usedPct }
+      : { totalTokens: usedTokens, limitTokens, compactionLimitTokens: limitTokens, usedPct };
+    return {
+      ...slotCtx,
+      context: nextCtx,
+      usedPct,
+      dashOffset,
+    };
+  }
+
   function buildSlotContextForSurface(telemetry, surface, activeSlotCtx) {
     if (!telemetry) return { hasTelemetry: false };
+    const selectedModel = detectSelectedModelForSurface(surface, telemetry);
     const targetCid = String(surface?.cascadeId || '').trim();
     const activeCid = String(telemetry.activeConversation?.cascadeId || '').trim();
     if (!targetCid || (targetCid !== '__new__' && activeCid && targetCid.toLowerCase() === activeCid.toLowerCase())) {
-      return activeSlotCtx;
+      const baseTotal = Number(activeSlotCtx.context?.totalTokens || 0);
+      return applySelectedModelLimitToSlotCtx(
+        { ...activeSlotCtx, quotaCyclePhase },
+        selectedModel,
+        baseTotal
+      );
     }
     const conv = targetCid === '__new__' ? null : findConversationSummary(telemetry, targetCid);
     const quotaDisplayMode = normalizeClientQuotaDisplayMode(telemetry.settings?.quotaDisplayMode);
     if (!conv) {
+      const emptyLimit = selectedModel?.limitTokens || 256000;
       return {
         hasTelemetry: true,
-        context: null,
+        context: {
+          totalTokens: 0,
+          limitTokens: emptyLimit,
+          compactionLimitTokens: emptyLimit,
+          usedPct: 0,
+        },
         usedPct: 0,
         dashOffset: RING_CIRCUMFERENCE,
         isRunning: false,
@@ -3267,16 +3327,19 @@ export function mountWindowOverlay() {
         sessionTokens: null,
         quotas: telemetry.quotas,
         quotaDisplayMode,
+        quotaCyclePhase,
       };
     }
-    const usedPct = Number.isFinite(Number(conv.contextUsedPct))
+    const baseLimit = Number(conv.contextLimitTokens || 256000);
+    const basePct = Number.isFinite(Number(conv.contextUsedPct))
       ? Math.max(0, Math.min(100, Number(conv.contextUsedPct)))
       : 0;
-    const dashOffset = +(RING_CIRCUMFERENCE * (1 - usedPct / 100)).toFixed(2);
-    return {
+    const baseTotal = Number(conv.contextTotalTokens ?? Math.round((basePct / 100) * baseLimit));
+    const dashOffset = +(RING_CIRCUMFERENCE * (1 - basePct / 100)).toFixed(2);
+    const baseSlotCtx = {
       hasTelemetry: true,
       context: conv.contextBreakdown || conv.context || null,
-      usedPct,
+      usedPct: basePct,
       dashOffset,
       isRunning: Boolean(conv.isRunning),
       tps: conv.latestTokPerSec ?? null,
@@ -3290,15 +3353,20 @@ export function mountWindowOverlay() {
       sessionTokens: conv.totalTokens ?? null,
       quotas: telemetry.quotas,
       quotaDisplayMode,
+      quotaCyclePhase,
     };
+    return applySelectedModelLimitToSlotCtx(baseSlotCtx, selectedModel, baseTotal);
   }
 
   function renderHoverWidgets() {
     const { telemetry, minuteTick } = telemetryStore.getState();
     let hoverData = telemetry;
-    const anchorCid = String(getActiveAnchorSurface()?.cascadeId || '').trim();
+    const anchorSurface = getActiveAnchorSurface();
+    const anchorCid = String(anchorSurface?.cascadeId || '').trim();
     const activeCid = String(telemetry?.activeConversation?.cascadeId || '').trim();
+    const selectedModel = detectSelectedModelForSurface(anchorSurface, telemetry);
     if (telemetry && anchorCid === '__new__') {
+      const emptyLimit = selectedModel?.limitTokens || 256000;
       hoverData = {
         ...telemetry,
         activeConversation: {
@@ -3316,12 +3384,12 @@ export function mountWindowOverlay() {
           latestCacheHitPct: null,
           latestPromptTokens: 0,
           totalTokens: 0,
-          activeModelShort: '',
-          activeModelUpstream: '',
+          activeModelShort: selectedModel?.label || '',
+          activeModelUpstream: selectedModel?.label || '',
           context: {
             totalTokens: 0,
-            limitTokens: 256000,
-            compactionLimitTokens: 256000,
+            limitTokens: emptyLimit,
+            compactionLimitTokens: emptyLimit,
             usedPct: 0,
           },
         },
@@ -3333,9 +3401,12 @@ export function mountWindowOverlay() {
     ) {
       const conv = findConversationSummary(telemetry, anchorCid);
       if (conv) {
-        const ctxLimit = Number(conv.contextLimitTokens || 256000);
-        const ctxPct = Number(conv.contextUsedPct || 0);
-        const ctxTotal = Number(conv.contextTotalTokens ?? Math.round((ctxPct / 100) * ctxLimit));
+        const baseLimit = Number(conv.contextLimitTokens || 256000);
+        const basePct = Number(conv.contextUsedPct || 0);
+        const ctxTotal = Number(conv.contextTotalTokens ?? Math.round((basePct / 100) * baseLimit));
+        const ctxLimit = selectedModel?.limitTokens || baseLimit;
+        const ctxPct =
+          ctxLimit > 0 ? Math.min(100, +((ctxTotal / ctxLimit) * 100).toFixed(2)) : 0;
         hoverData = {
           ...telemetry,
           activeConversation: {
@@ -3353,8 +3424,8 @@ export function mountWindowOverlay() {
             latestCacheHitPct: conv.latestCacheHitPct ?? null,
             latestPromptTokens: conv.latestPromptTokens ?? 0,
             totalTokens: conv.totalTokens ?? 0,
-            activeModelShort: conv.modelShort || '',
-            activeModelUpstream: conv.modelUpstream || conv.modelShort || '',
+            activeModelShort: selectedModel?.label || conv.modelShort || '',
+            activeModelUpstream: selectedModel?.label || conv.modelUpstream || conv.modelShort || '',
             context: {
               ...(conv.contextBreakdown || conv.context || {}),
               totalTokens: ctxTotal,
@@ -3365,6 +3436,26 @@ export function mountWindowOverlay() {
           },
         };
       }
+    } else if (telemetry && selectedModel && selectedModel.limitTokens > 0 && telemetry.activeConversation) {
+      const ac = telemetry.activeConversation;
+      const acCtx = ac.context || {};
+      const ctxTotal = Math.max(0, Number(acCtx.totalTokens || 0));
+      const ctxLimit = selectedModel.limitTokens;
+      const ctxPct = Math.min(100, +((ctxTotal / ctxLimit) * 100).toFixed(2));
+      hoverData = {
+        ...telemetry,
+        activeConversation: {
+          ...ac,
+          activeModelShort: ac.activeModelShort || selectedModel.label,
+          context: {
+            ...acCtx,
+            totalTokens: ctxTotal,
+            limitTokens: ctxLimit,
+            compactionLimitTokens: ctxLimit,
+            usedPct: ctxPct,
+          },
+        },
+      };
     }
     hoverWidgetHost.update({
       moduleKeys: normalizeClientHoverModules(telemetry?.settings?.hoverModules),
@@ -3556,6 +3647,7 @@ export function mountWindowOverlay() {
       sessionTokens,
       quotas: telemetry.quotas,
       quotaDisplayMode: normalizeClientQuotaDisplayMode(telemetry.settings?.quotaDisplayMode),
+      quotaCyclePhase,
     };
     for (const s of getAllCapsuleSurfaces()) {
       const sCtx = buildSlotContextForSurface(telemetry, s, activeSlotCtx);
@@ -3803,6 +3895,7 @@ export function mountWindowOverlay() {
           if (!isDockPlacementSynced(dock)) {
             scheduleDockSync();
           }
+          scheduleSelectedModelSync();
         });
         hostDomObserver.observe(document.body, {
           childList: true,
@@ -3826,10 +3919,64 @@ export function mountWindowOverlay() {
   window.addEventListener?.('popstate', onPopState);
   navigator?.windowControlsOverlay?.addEventListener?.('geometrychange', onWindowResize);
 
+  function scheduleSelectedModelSync() {
+    if (disposed) return;
+    if (selectedModelSyncTimer) clearTimeout(selectedModelSyncTimer);
+    selectedModelSyncTimer = setTimeout(() => {
+      selectedModelSyncTimer = null;
+      if (disposed) return;
+      const telemetry = telemetryStore.getState().telemetry;
+      if (!telemetry) return;
+      let changed = false;
+      for (const s of getAllCapsuleSurfaces()) {
+        const m = detectSelectedModelForSurface(s, telemetry);
+        const sig = m ? `${m.groupId}:${m.limitTokens}` : '';
+        if (s._lastDetectedModelSig !== sig) {
+          s._lastDetectedModelSig = sig;
+          changed = true;
+        }
+      }
+      if (changed) {
+        renderCapsuleTelemetry();
+      }
+    }, 120);
+  }
+
+  function startQuotaCycleTicker() {
+    if (quotaCycleInterval) return;
+    const CYCLE_HOLD_MS = 6000;
+    quotaCycleInterval = setInterval(() => {
+      if (disposed || tooltipOpen || popoverOpen) return;
+      const reducedMotion =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+      if (reducedMotion) return;
+
+      const surfaces = getAllCapsuleSurfaces();
+      let hasCyclable = false;
+      for (const s of surfaces) {
+        for (const slot of s.capsuleSlots || []) {
+          if (slot && slot.canCycle && !slot.el?.hasAttribute?.('hidden')) {
+            hasCyclable = true;
+            break;
+          }
+        }
+        if (hasCyclable) break;
+      }
+      if (!hasCyclable) return;
+
+      quotaCyclePhase = quotaCyclePhase === '5h' ? 'weekly' : '5h';
+      renderCapsuleTelemetry();
+    }, CYCLE_HOLD_MS);
+  }
+
+  startQuotaCycleTicker();
+
   const watchdogTimer = setInterval(() => {
     if (disposed) return;
     syncHostRouteIfChanged();
     ensureWorkbenchThemeObserved();
+    scheduleSelectedModelSync();
     const dock = resolveRuntimeDockTarget();
     if (!isDockPlacementSynced(dock)) {
       ensureCapsuleDocked();
@@ -3937,6 +4084,18 @@ export function mountWindowOverlay() {
       if (disposed) return;
       disposed = true;
       clearInterval(watchdogTimer);
+      if (quotaCycleInterval) {
+        clearInterval(quotaCycleInterval);
+        quotaCycleInterval = null;
+      }
+      if (quotaCycleFadeTimer) {
+        clearTimeout(quotaCycleFadeTimer);
+        quotaCycleFadeTimer = null;
+      }
+      if (selectedModelSyncTimer) {
+        clearTimeout(selectedModelSyncTimer);
+        selectedModelSyncTimer = null;
+      }
       if (hoverLeaveTimer) {
         clearTimeout(hoverLeaveTimer);
         hoverLeaveTimer = null;

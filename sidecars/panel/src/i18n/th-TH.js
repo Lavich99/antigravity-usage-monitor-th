@@ -107,8 +107,10 @@ export const I18N_MESSAGES_TH_TH = Object.freeze({
   'capMetric.cache_hit': 'Cache Hit (%)',
   'capMetric.session_tokens': 'Token รวมแชท',
   'capMetric.quota_auto': 'โควต้าที่เหลือน้อยสุด',
+  'capMetric.gemini_cycle': 'Gemini สลับ 5 ชม. ↔ สัปดาห์',
   'capMetric.gemini_5h': 'โควต้า Gemini 5 ชม.',
   'capMetric.gemini_weekly': 'โควต้า Gemini รายสัปดาห์',
+  'capMetric.claude_cycle': 'Claude สลับ 5 ชม. ↔ สัปดาห์',
   'capMetric.claude_5h': 'โควต้า Claude 5 ชม.',
   'capMetric.claude_weekly': 'โควต้า Claude รายสัปดาห์',
 

@@ -98,6 +98,20 @@ export function formatCnyApprox(usdAmount, rate = undefined) {
   return formatApproxCurrency(usdAmount, '฿', resolvedRate);
 }
 
+export function formatStepDateTime(createdAtMs) {
+  const ms = Number(createdAtMs || 0);
+  if (!(ms > 0) || !Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  const hhmmss = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  if (isThaiLocale()) {
+    const mon = TH_MONTH_SHORT[d.getMonth()] || '';
+    return `${d.getDate()} ${mon} ${d.getFullYear()} · ${hhmmss}`;
+  }
+  const mon = EN_MONTH_SHORT[d.getMonth()] || '';
+  return `${mon} ${d.getDate()}, ${d.getFullYear()} · ${hhmmss}`;
+}
+
 export function formatDateSpanBadge(startMs, endMs) {
   const s = startMs && Number.isFinite(startMs) ? new Date(startMs) : new Date();
   const e = endMs && Number.isFinite(endMs) ? new Date(endMs) : new Date();

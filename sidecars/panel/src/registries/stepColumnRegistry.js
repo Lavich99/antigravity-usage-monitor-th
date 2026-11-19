@@ -9,6 +9,7 @@ import { h, patchAttr, patchText } from '../core/domPatch.js';
 import {
   formatCachePct,
   formatMetric,
+  formatStepDateTime,
   formatTokens,
   formatUsd,
   getCacheToneClass,
@@ -128,8 +129,7 @@ function formatStepClockTime(createdAtMs) {
   const d = new Date(ms);
   const pad = (n) => String(n).padStart(2, '0');
   const hhmmss = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  const full = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hhmmss}`;
-  return { text: hhmmss, title: full };
+  return { text: hhmmss, title: formatStepDateTime(ms) };
 }
 
 export const STEP_COLUMN_REGISTRY = Object.freeze({
@@ -137,7 +137,7 @@ export const STEP_COLUMN_REGISTRY = Object.freeze({
     key: 'step',
     thLabel: () => t('stepCol.step.th'),
     optLabel: () => t('stepCol.step.opt'),
-    sigPart: (st) => `${st.stepIndex}`,
+    sigPart: (st) => `${st.stepIndex}:${st.createdAtMs || 0}`,
     createCell: () => {
       const valEl = h('span');
       const td = h('td', {}, [valEl]);
@@ -145,6 +145,8 @@ export const STEP_COLUMN_REGISTRY = Object.freeze({
     },
     updateCell: (refs, st) => {
       patchText(refs.valEl, `#${Number(st.stepIndex)}`);
+      const dt = formatStepDateTime(st.createdAtMs);
+      patchAttr(refs.td, 'title', dt || null);
     },
   },
 

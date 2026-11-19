@@ -145,13 +145,90 @@ export const CLIENT_TOPBAR_SLOT_KEYS = Object.freeze([
   'cache_hit',
   'session_tokens',
   'quota_auto',
+  'gemini_cycle',
   'gemini_5h',
   'gemini_weekly',
+  'claude_cycle',
   'claude_5h',
   'claude_weekly',
 ]);
 
-export const DEFAULT_CLIENT_TOPBAR_SLOTS = Object.freeze(['gemini_5h', 'context']);
+export const DEFAULT_CLIENT_TOPBAR_SLOTS = Object.freeze(['gemini_cycle', 'context']);
+
+function normalizeModelMatchKey(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\((?:low|medium|high|xhigh|extra[ -]high|extra|max|thinking)\)\s*$/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Resolve the effective Context Window limit (in tokens) for a model currently
+ * selected in the Composer UI before a prompt is sent.
+ * Priority: user override in settings.modelContextWindows -> LS reportedLimitTokens -> catalog capacity.
+ *
+ * @param {string} modelLabel
+ * @param {object|null|undefined} telemetry
+ * @returns {{ groupId: string, label: string, limitTokens: number } | null}
+ */
+export function resolveSelectedModelContextLimit(modelLabel, telemetry) {
+  const needle = normalizeModelMatchKey(modelLabel);
+  if (!needle) return null;
+  const groups = Array.isArray(telemetry?.contextWindowModels) ? telemetry.contextWindowModels : [];
+  if (!groups.length) return null;
+
+  let matched = null;
+  for (const g of groups) {
+    const gLabelKey = normalizeModelMatchKey(g?.label);
+    const gIdKey = normalizeModelMatchKey(String(g?.id || '').replace(/^model:/i, ''));
+    if (gLabelKey && (gLabelKey === needle || needle === gIdKey)) {
+      matched = g;
+      break;
+    }
+  }
+  if (!matched) {
+    let bestScore = 0;
+    for (const g of groups) {
+      const gLabelKey = normalizeModelMatchKey(g?.label);
+      const gIdKey = normalizeModelMatchKey(String(g?.id || '').replace(/^model:/i, ''));
+      for (const cand of [gLabelKey, gIdKey]) {
+        if (!cand) continue;
+        if (cand.includes(needle) || needle.includes(cand)) {
+          const score = Math.min(cand.length, needle.length);
+          if (score > bestScore) {
+            bestScore = score;
+            matched = g;
+          }
+        }
+      }
+    }
+  }
+  if (!matched) return null;
+
+  const overrides = telemetry?.settings?.modelContextWindows || {};
+  const overrideRaw =
+    overrides[matched.id] ||
+    (Array.isArray(matched.members)
+      ? matched.members.map((m) => overrides[m]).find(Boolean)
+      : null);
+  const overrideTokens = Number(overrideRaw);
+  if (Number.isFinite(overrideTokens) && overrideTokens > 0) {
+    return { groupId: matched.id, label: matched.label || modelLabel, limitTokens: overrideTokens };
+  }
+
+  const reported = Number(matched.reportedLimitTokens);
+  if (Number.isFinite(reported) && reported > 0) {
+    return { groupId: matched.id, label: matched.label || modelLabel, limitTokens: reported };
+  }
+
+  const capacity = Number(matched.capacity);
+  if (Number.isFinite(capacity) && capacity > 0) {
+    return { groupId: matched.id, label: matched.label || modelLabel, limitTokens: capacity };
+  }
+  return null;
+}
 
 export const CLIENT_OVERVIEW_MODULE_KEYS = Object.freeze([
   'metrics',

@@ -377,8 +377,10 @@ const I18N_MESSAGES_EN_US = Object.freeze({
   'capMetric.cache_hit': 'Cache Hit Rate (%)',
   'capMetric.session_tokens': 'Session Tokens',
   'capMetric.quota_auto': 'Auto Tightest Quota',
+  'capMetric.gemini_cycle': 'Gemini 5h ↔ Weekly',
   'capMetric.gemini_5h': 'Gemini 5h Quota',
   'capMetric.gemini_weekly': 'Gemini Weekly Quota',
+  'capMetric.claude_cycle': 'Claude 5h ↔ Weekly',
   'capMetric.claude_5h': 'Claude 5h Quota',
   'capMetric.claude_weekly': 'Claude Weekly Quota',
 
@@ -924,8 +926,10 @@ const I18N_MESSAGES_TH_TH = Object.freeze({
   'capMetric.cache_hit': 'Cache Hit (%)',
   'capMetric.session_tokens': 'Token รวมแชท',
   'capMetric.quota_auto': 'โควต้าที่เหลือน้อยสุด',
+  'capMetric.gemini_cycle': 'Gemini สลับ 5 ชม. ↔ สัปดาห์',
   'capMetric.gemini_5h': 'โควต้า Gemini 5 ชม.',
   'capMetric.gemini_weekly': 'โควต้า Gemini รายสัปดาห์',
+  'capMetric.claude_cycle': 'Claude สลับ 5 ชม. ↔ สัปดาห์',
   'capMetric.claude_5h': 'โควต้า Claude 5 ชม.',
   'capMetric.claude_weekly': 'โควต้า Claude รายสัปดาห์',
 
@@ -1939,6 +1943,20 @@ function formatCnyApprox(usdAmount, rate = undefined) {
   return formatApproxCurrency(usdAmount, '฿', resolvedRate);
 }
 
+function formatStepDateTime(createdAtMs) {
+  const ms = Number(createdAtMs || 0);
+  if (!(ms > 0) || !Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  const hhmmss = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  if (isThaiLocale()) {
+    const mon = TH_MONTH_SHORT[d.getMonth()] || '';
+    return `${d.getDate()} ${mon} ${d.getFullYear()} · ${hhmmss}`;
+  }
+  const mon = EN_MONTH_SHORT[d.getMonth()] || '';
+  return `${mon} ${d.getDate()}, ${d.getFullYear()} · ${hhmmss}`;
+}
+
 function formatDateSpanBadge(startMs, endMs) {
   const s = startMs && Number.isFinite(startMs) ? new Date(startMs) : new Date();
   const e = endMs && Number.isFinite(endMs) ? new Date(endMs) : new Date();
@@ -2796,13 +2814,90 @@ const CLIENT_TOPBAR_SLOT_KEYS = Object.freeze([
   'cache_hit',
   'session_tokens',
   'quota_auto',
+  'gemini_cycle',
   'gemini_5h',
   'gemini_weekly',
+  'claude_cycle',
   'claude_5h',
   'claude_weekly',
 ]);
 
-const DEFAULT_CLIENT_TOPBAR_SLOTS = Object.freeze(['gemini_5h', 'context']);
+const DEFAULT_CLIENT_TOPBAR_SLOTS = Object.freeze(['gemini_cycle', 'context']);
+
+function normalizeModelMatchKey(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\((?:low|medium|high|xhigh|extra[ -]high|extra|max|thinking)\)\s*$/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Resolve the effective Context Window limit (in tokens) for a model currently
+ * selected in the Composer UI before a prompt is sent.
+ * Priority: user override in settings.modelContextWindows -> LS reportedLimitTokens -> catalog capacity.
+ *
+ * @param {string} modelLabel
+ * @param {object|null|undefined} telemetry
+ * @returns {{ groupId: string, label: string, limitTokens: number } | null}
+ */
+function resolveSelectedModelContextLimit(modelLabel, telemetry) {
+  const needle = normalizeModelMatchKey(modelLabel);
+  if (!needle) return null;
+  const groups = Array.isArray(telemetry?.contextWindowModels) ? telemetry.contextWindowModels : [];
+  if (!groups.length) return null;
+
+  let matched = null;
+  for (const g of groups) {
+    const gLabelKey = normalizeModelMatchKey(g?.label);
+    const gIdKey = normalizeModelMatchKey(String(g?.id || '').replace(/^model:/i, ''));
+    if (gLabelKey && (gLabelKey === needle || needle === gIdKey)) {
+      matched = g;
+      break;
+    }
+  }
+  if (!matched) {
+    let bestScore = 0;
+    for (const g of groups) {
+      const gLabelKey = normalizeModelMatchKey(g?.label);
+      const gIdKey = normalizeModelMatchKey(String(g?.id || '').replace(/^model:/i, ''));
+      for (const cand of [gLabelKey, gIdKey]) {
+        if (!cand) continue;
+        if (cand.includes(needle) || needle.includes(cand)) {
+          const score = Math.min(cand.length, needle.length);
+          if (score > bestScore) {
+            bestScore = score;
+            matched = g;
+          }
+        }
+      }
+    }
+  }
+  if (!matched) return null;
+
+  const overrides = telemetry?.settings?.modelContextWindows || {};
+  const overrideRaw =
+    overrides[matched.id] ||
+    (Array.isArray(matched.members)
+      ? matched.members.map((m) => overrides[m]).find(Boolean)
+      : null);
+  const overrideTokens = Number(overrideRaw);
+  if (Number.isFinite(overrideTokens) && overrideTokens > 0) {
+    return { groupId: matched.id, label: matched.label || modelLabel, limitTokens: overrideTokens };
+  }
+
+  const reported = Number(matched.reportedLimitTokens);
+  if (Number.isFinite(reported) && reported > 0) {
+    return { groupId: matched.id, label: matched.label || modelLabel, limitTokens: reported };
+  }
+
+  const capacity = Number(matched.capacity);
+  if (Number.isFinite(capacity) && capacity > 0) {
+    return { groupId: matched.id, label: matched.label || modelLabel, limitTokens: capacity };
+  }
+  return null;
+}
 
 const CLIENT_OVERVIEW_MODULE_KEYS = Object.freeze([
   'metrics',
@@ -7126,7 +7221,8 @@ function createSessionLineChart() {
     patchAttr(peakPill, 'hidden', true);
     patchAttr(tooltipEl, 'hidden', false);
 
-    patchText(tipHeadLeft, pt.stepTag);
+    const stepTimeStr = formatStepDateTime(pt.st?.createdAtMs);
+    patchText(tipHeadLeft, stepTimeStr ? `${pt.stepTag} · ${stepTimeStr}` : pt.stepTag);
     patchText(tipHeadRight, pt.modelText);
     patchText(
       tipMainLeft,
@@ -7900,7 +7996,8 @@ function createModelFitChart() {
     patchAttr(hoverRawDot, 'cy', sp.rawY.toFixed(1));
 
     patchAttr(tooltipEl, 'hidden', false);
-    patchText(tipHeadLeft, sp.stepTag);
+    const stepTimeStr = formatStepDateTime(sp.st?.createdAtMs);
+    patchText(tipHeadLeft, stepTimeStr ? `${sp.stepTag} · ${stepTimeStr}` : sp.stepTag);
     patchText(tipHeadRight, sp.modelText);
     patchText(tipMainLeft, `${chartL10n('Fit', 'Fit')} ${formatChartMetricValue(currentMetric, sp.fitVal)}`);
     patchText(tipMainRight, `${chartL10n('ค่าจริง', 'Obs')} ${formatChartMetricValue(currentMetric, sp.rawVal)}`);
@@ -8656,8 +8753,13 @@ function createModelFitChart() {
 
 
 const CAPSULE_METRIC_KEYS = Object.freeze([
-  'gemini_5h',
+  'gemini_cycle',
   'context',
+  'gemini_5h',
+  'gemini_weekly',
+  'claude_cycle',
+  'claude_5h',
+  'claude_weekly',
   'tps',
   'ttft',
   'avg_tps',
@@ -8666,9 +8768,6 @@ const CAPSULE_METRIC_KEYS = Object.freeze([
   'cache_hit',
   'session_tokens',
   'quota_auto',
-  'gemini_weekly',
-  'claude_5h',
-  'claude_weekly',
 ]);
 
 const OVERVIEW_METRIC_KEYS = Object.freeze([
@@ -8863,7 +8962,10 @@ function formatCompactCapsuleCost(costUsd) {
 function formatCapsulePctText(val) {
   const num = Number(val);
   if (!Number.isFinite(num)) return '--%';
-  return `${Math.max(0, Math.min(100, num)).toFixed(2)}%`;
+  const clamped = Math.max(0, Math.min(100, num));
+  const fixed2 = +clamped.toFixed(2);
+  if (fixed2 >= 100) return '100%';
+  return `${fixed2.toFixed(2)}%`;
 }
 
 function formatCapsuleTpsText(val) {
@@ -9149,19 +9251,87 @@ function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumference)
     };
   }
 
-  const quotaSum = !slotCtx.hasTelemetry
-    ? null
-    : metricKey === 'quota_auto'
-      ? resolveQuotaCapsuleSummary(slotCtx.quotas)
-      : resolveSpecificQuotaSlotSummary(slotCtx.quotas, metricKey);
+  const isCycleQuota = metricKey === 'gemini_cycle' || metricKey === 'claude_cycle';
+  const cyclePrefix = metricKey === 'claude_cycle' ? 'claude' : 'gemini';
+  const cyclePhase = slotCtx.quotaCyclePhase === 'weekly' ? 'weekly' : '5h';
+
+  let quotaSum = null;
+  let windowTag = '';
+  let canCycle = false;
+  let cycleLayers = null;
   const quotaMode = slotCtx.quotaDisplayMode === 'used' ? 'used' : 'left';
+  const buildQuotaDisplay = (sum) => {
+    if (!sum) return { text: '--%', toneClass: '' };
+    const rem = Math.max(0, Math.min(100, sum.exactPct ?? sum.roundedPct));
+    const disp = Math.max(
+      0,
+      Math.min(100, +(quotaMode === 'used' ? 100 - rem : rem).toFixed(2))
+    );
+    const danger = rem <= 15;
+    const warn = !danger && rem <= 30;
+    return {
+      text: formatCapsulePctText(disp),
+      toneClass: danger ? 'tone-danger' : warn ? 'tone-warn' : '',
+    };
+  };
+
+  if (slotCtx.hasTelemetry) {
+    if (isCycleQuota) {
+      const sum5h = resolveSpecificQuotaSlotSummary(slotCtx.quotas, `${cyclePrefix}_5h`);
+      const sumWk = resolveSpecificQuotaSlotSummary(slotCtx.quotas, `${cyclePrefix}_weekly`);
+      canCycle = Boolean(sum5h && sumWk);
+      if (canCycle) {
+        quotaSum = cyclePhase === 'weekly' ? sumWk : sum5h;
+        windowTag = cyclePhase === 'weekly' ? '7d' : '5h';
+        cycleLayers = {
+          activePhase: cyclePhase,
+          p5h: { tag: '5h', ...buildQuotaDisplay(sum5h) },
+          pWk: { tag: '7d', ...buildQuotaDisplay(sumWk) },
+        };
+      } else if (sum5h) {
+        quotaSum = sum5h;
+        windowTag = '5h';
+        cycleLayers = {
+          activePhase: '5h',
+          p5h: { tag: '5h', ...buildQuotaDisplay(sum5h) },
+          pWk: null,
+        };
+      } else if (sumWk) {
+        quotaSum = sumWk;
+        windowTag = '7d';
+        cycleLayers = {
+          activePhase: 'weekly',
+          p5h: null,
+          pWk: { tag: '7d', ...buildQuotaDisplay(sumWk) },
+        };
+      }
+    } else if (metricKey === 'quota_auto') {
+      quotaSum = resolveQuotaCapsuleSummary(slotCtx.quotas);
+    } else {
+      quotaSum = resolveSpecificQuotaSlotSummary(slotCtx.quotas, metricKey);
+    }
+  } else if (isCycleQuota) {
+    windowTag = cyclePhase === 'weekly' ? '7d' : '5h';
+    cycleLayers = {
+      activePhase: '5h',
+      p5h: { tag: '5h', text: '--%', toneClass: '' },
+      pWk: null,
+    };
+  }
+
+  const segClassBase = isCycleQuota
+    ? 'wm-cap-slot wm-ctx-seg wm-seg-quota has-win-tag'
+    : 'wm-cap-slot wm-ctx-seg wm-seg-quota';
   if (!quotaSum) {
     return {
       hidden: false,
       metric: metricKey,
-      segClass: 'wm-cap-slot wm-ctx-seg wm-seg-quota',
+      segClass: segClassBase,
       textClass: 'wm-slot-text wm-ctx-pct wm-quota-text',
       showRing: true,
+      windowTag,
+      canCycle: false,
+      cycleLayers,
       dashOffset: ringCircumference,
       text: '--%',
       toneClass: '',
@@ -9182,9 +9352,12 @@ function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumference)
   return {
     hidden: false,
     metric: metricKey,
-    segClass: 'wm-cap-slot wm-ctx-seg wm-seg-quota',
+    segClass: segClassBase,
     textClass: 'wm-slot-text wm-ctx-pct wm-quota-text',
     showRing: true,
+    windowTag,
+    canCycle,
+    cycleLayers,
     dashOffset: quotaDashOffset,
     text: formatCapsulePctText(displayPct),
     animSpec: { value: displayPct, format: formatCapsulePctText },
@@ -10185,13 +10358,18 @@ function syncPoolQuotaRow(refs, item, idx, rowEl) {
     patchText(refs.usage5h, '');
     patchAttr(refs.left5h, 'title', null);
   }
+  const fmtPct1 = (v) => {
+    const n = Math.max(0, Math.min(100, Number(v || 0)));
+    const r = +n.toFixed(1);
+    return r >= 100 ? '100' : r.toFixed(1);
+  };
   patchText(
     refs.meta5h,
     has5h
       ? t('quota.usedAndLeft', {
           reset: formatCountdown(poolData.resetTime),
-          used: used5hVal.toFixed(1),
-          rem: rem5hVal.toFixed(1),
+          used: fmtPct1(used5hVal),
+          rem: fmtPct1(rem5hVal),
         })
       : fallbackMetaText
   );
@@ -10237,8 +10415,8 @@ function syncPoolQuotaRow(refs, item, idx, rowEl) {
     hasWk
       ? t('quota.usedAndLeft', {
           reset: formatCountdown(wkResetRaw),
-          used: usedWkVal.toFixed(1),
-          rem: remWkVal.toFixed(1),
+          used: fmtPct1(usedWkVal),
+          rem: fmtPct1(remWkVal),
         })
       : fallbackMetaText
   );
@@ -11137,8 +11315,7 @@ function formatStepClockTime(createdAtMs) {
   const d = new Date(ms);
   const pad = (n) => String(n).padStart(2, '0');
   const hhmmss = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  const full = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hhmmss}`;
-  return { text: hhmmss, title: full };
+  return { text: hhmmss, title: formatStepDateTime(ms) };
 }
 
 const STEP_COLUMN_REGISTRY = Object.freeze({
@@ -11146,7 +11323,7 @@ const STEP_COLUMN_REGISTRY = Object.freeze({
     key: 'step',
     thLabel: () => t('stepCol.step.th'),
     optLabel: () => t('stepCol.step.opt'),
-    sigPart: (st) => `${st.stepIndex}`,
+    sigPart: (st) => `${st.stepIndex}:${st.createdAtMs || 0}`,
     createCell: () => {
       const valEl = h('span');
       const td = h('td', {}, [valEl]);
@@ -11154,6 +11331,8 @@ const STEP_COLUMN_REGISTRY = Object.freeze({
     },
     updateCell: (refs, st) => {
       patchText(refs.valEl, `#${Number(st.stepIndex)}`);
+      const dt = formatStepDateTime(st.createdAtMs);
+      patchAttr(refs.td, 'title', dt || null);
     },
   },
 
@@ -11515,19 +11694,44 @@ function createCapsuleSlotNode(slotIndex, initialMetric) {
 
   const isNone = initialMetric === 'none';
   const isCtx = initialMetric === 'context';
+  const isCycleQuota = initialMetric === 'gemini_cycle' || initialMetric === 'claude_cycle';
   const isQuota =
+    isCycleQuota ||
     initialMetric === 'quota_auto' ||
     initialMetric === 'gemini_5h' ||
     initialMetric === 'gemini_weekly' ||
     initialMetric === 'claude_5h' ||
     initialMetric === 'claude_weekly';
   const isRingSlot = isCtx || isQuota;
+  const xfade5hTag = h('span', { className: 'wm-quota-win-tag', 'data-win': '5h', text: '5h' });
+  const xfade5hText = h('span', {
+    className: 'wm-slot-text wm-ctx-pct wm-quota-text',
+    text: '--%',
+  });
+  const xfade5hLayer = h('span', { className: 'wm-xfade-layer is-active', 'data-phase': '5h' }, [
+    xfade5hTag,
+    xfade5hText,
+  ]);
+  const xfadeWkTag = h('span', { className: 'wm-quota-win-tag', 'data-win': '7d', text: '7d' });
+  const xfadeWkText = h('span', {
+    className: 'wm-slot-text wm-ctx-pct wm-quota-text',
+    text: '--%',
+  });
+  const xfadeWkLayer = h('span', { className: 'wm-xfade-layer', 'data-phase': 'weekly' }, [
+    xfadeWkTag,
+    xfadeWkText,
+  ]);
+  const xfadeWrap = h('span', { className: 'wm-quota-xfade-wrap', hidden: !isCycleQuota }, [
+    xfade5hLayer,
+    xfadeWkLayer,
+  ]);
   const textSpan = h('span', {
     className: isCtx
       ? 'wm-slot-text wm-ctx-pct'
       : isQuota
         ? 'wm-slot-text wm-ctx-pct wm-quota-text'
         : 'wm-slot-text',
+    hidden: isCycleQuota,
     text: isNone
       ? ''
       : isRingSlot
@@ -11545,19 +11749,21 @@ function createCapsuleSlotNode(slotIndex, initialMetric) {
         ? 'wm-cap-slot'
         : isCtx
           ? 'wm-cap-slot wm-ctx-seg'
-          : isQuota
-            ? 'wm-cap-slot wm-ctx-seg wm-seg-quota'
-            : initialMetric === 'tps'
-              ? 'wm-cap-slot wm-seg-speed'
-              : initialMetric === 'ttft'
-                ? 'wm-cap-slot wm-seg-metric'
-                : 'wm-cap-slot wm-seg-cost',
+          : isCycleQuota
+            ? 'wm-cap-slot wm-ctx-seg wm-seg-quota has-win-tag'
+            : isQuota
+              ? 'wm-cap-slot wm-ctx-seg wm-seg-quota'
+              : initialMetric === 'tps'
+                ? 'wm-cap-slot wm-seg-speed'
+                : initialMetric === 'ttft'
+                  ? 'wm-cap-slot wm-seg-metric'
+                  : 'wm-cap-slot wm-seg-cost',
       hidden: isNone,
       'data-slot-idx': String(slotIndex),
       'data-metric': initialMetric,
       'data-vis-rank': isNone ? '' : String(slotIndex + 1),
     },
-    isRingSlot ? [ringSvg, textSpan] : [textSpan]
+    isCycleQuota ? [ringSvg, xfadeWrap] : isRingSlot ? [ringSvg, textSpan] : [textSpan]
   );
 
   return {
@@ -11565,8 +11771,16 @@ function createCapsuleSlotNode(slotIndex, initialMetric) {
     ringSvg,
     ringFill,
     ringSegs,
+    xfadeWrap,
+    xfade5hLayer,
+    xfade5hText,
+    xfadeWkLayer,
+    xfadeWkText,
     textSpan,
     ringMounted: isRingSlot,
+    xfadeMounted: isCycleQuota,
+    textMounted: !isCycleQuota,
+    canCycle: false,
   };
 }
 
@@ -11687,12 +11901,15 @@ function syncCapsuleSlotNodes(capsuleSlots, capsuleSeps, slotKeys, slotCtx) {
     patchAttr(slot.el, 'data-vis-rank', String(visRank));
 
     if (pres.showRing && !slot.ringMounted) {
-      slot.el.insertBefore(slot.ringSvg, slot.textSpan);
+      slot.el.insertBefore(slot.ringSvg, slot.el.firstChild || null);
       slot.ringMounted = true;
     } else if (!pres.showRing && slot.ringMounted) {
       slot.ringSvg.remove();
       slot.ringMounted = false;
     }
+
+    const useXfade = Boolean(pres.cycleLayers && slot.xfadeWrap);
+    slot.canCycle = Boolean(pres.canCycle);
 
     const toneCls =
       pres.toneClass || (pres.danger ? 'tone-danger' : pres.warn ? 'tone-warn' : '');
@@ -11700,7 +11917,51 @@ function syncCapsuleSlotNodes(capsuleSlots, capsuleSeps, slotKeys, slotCtx) {
     patchAttr(slot.el, 'class', fullSegClass);
     const fullTextClass = `${pres.textClass}${toneCls ? ` ${toneCls}` : ''}`;
     patchAttr(slot.textSpan, 'class', fullTextClass);
-    syncAnimatedSlotText(slot, pres.metric, pres.text, pres.animSpec);
+
+    if (useXfade) {
+      cancelSlotNumberAnim(slot);
+      slot._numAnim = null;
+      if (slot.textMounted !== false && typeof slot.textSpan?.remove === 'function') {
+        slot.textSpan.remove();
+        slot.textMounted = false;
+      }
+      if (!slot.xfadeMounted && typeof slot.el.appendChild === 'function') {
+        slot.el.appendChild(slot.xfadeWrap);
+        slot.xfadeMounted = true;
+      }
+      patchAttr(slot.xfadeWrap, 'hidden', false);
+      const layers = pres.cycleLayers;
+      const isWkActive = layers.activePhase === 'weekly' && Boolean(layers.pWk);
+      if (layers.p5h) {
+        patchText(slot.xfade5hText, layers.p5h.text);
+        patchAttr(
+          slot.xfade5hText,
+          'class',
+          `wm-slot-text wm-ctx-pct wm-quota-text${layers.p5h.toneClass ? ` ${layers.p5h.toneClass}` : ''}`
+        );
+      }
+      if (layers.pWk) {
+        patchText(slot.xfadeWkText, layers.pWk.text);
+        patchAttr(
+          slot.xfadeWkText,
+          'class',
+          `wm-slot-text wm-ctx-pct wm-quota-text${layers.pWk.toneClass ? ` ${layers.pWk.toneClass}` : ''}`
+        );
+      }
+      patchClasses(slot.xfade5hLayer, { 'is-active': !isWkActive });
+      patchClasses(slot.xfadeWkLayer, { 'is-active': isWkActive });
+    } else {
+      if (slot.xfadeMounted && typeof slot.xfadeWrap?.remove === 'function') {
+        slot.xfadeWrap.remove();
+        slot.xfadeMounted = false;
+      }
+      if (slot.textMounted === false && typeof slot.el.appendChild === 'function') {
+        slot.el.appendChild(slot.textSpan);
+        slot.textMounted = true;
+      }
+      patchAttr(slot.textSpan, 'hidden', false);
+      syncAnimatedSlotText(slot, pres.metric, pres.text, pres.animSpec);
+    }
 
     if (pres.showRing) {
       const segList = Array.isArray(pres.ringSegments) ? pres.ringSegments : null;
@@ -12346,11 +12607,18 @@ const StepTableWidget = defineComponent({
             patchAttr(refs.railEl, 'class', `turn-rail${isLatest ? ' is-latest' : ''}${hasUp ? ' has-up' : ''}${hasDown ? ' has-down' : ''}${marker}`);
           }
 
-          const hoverTd = showRowRail && prompt ? firstTd : null;
+          const hoverStepActive = Boolean(firstTd && (firstColKey === 'step' || (showRowRail && prompt)));
+          const dateTimeStr = formatStepDateTime(st.createdAtMs);
+          const tipLines = [];
+          if (dateTimeStr) tipLines.push(dateTimeStr);
+          if (showRowRail && prompt) tipLines.push(prompt);
+          const tipText = tipLines.join('\n');
+          const hoverTd = hoverStepActive && tipText ? firstTd : null;
           if (refs.hoverTd !== hoverTd) clearCellHover(refs.hoverTd);
           refs.hoverTd = hoverTd;
           if (hoverTd) {
-            hoverRows.set(hoverTd, { badge: refs.agentBadgeEl, prompt });
+            patchAttr(hoverTd, 'title', null);
+            hoverRows.set(hoverTd, { badge: refs.agentBadgeEl, prompt: tipText });
             hoverTd.onmouseenter = firstColKey === 'step' ? enterStepCell : null;
             hoverTd.onmousemove = firstColKey === 'step' ? moveInStepCell : moveAlongTurnRail;
             hoverTd.onmouseleave = hideTurnTip;
@@ -13724,7 +13992,7 @@ const SettingsGeneralTab = defineComponent({
 
     const pricingCountVal = h('strong', { className: 'cell-value', text: '—' });
     const pricingSyncSub = h('span', { className: 'cell-sub', text: t('quota.loading') });
-    const versionVal = h('strong', { className: 'cell-value', text: 'v1.5.0-th.1' });
+    const versionVal = h('strong', { className: 'cell-value', text: 'v1.5.0-th.2' });
     const versionSub = h('span', { className: 'cell-sub', text: t('settings.gen.checkingBtn') });
 
     const syncPricingBtnText = h('span', { text: t('settings.gen.syncBtn') });
@@ -13800,7 +14068,7 @@ const SettingsGeneralTab = defineComponent({
               );
               return;
             }
-            const curVer = cs?.currentPluginVersion || '1.5.0-th.1';
+            const curVer = cs?.currentPluginVersion || '1.5.0-th.2';
             showCloudFeedback(t('settings.gen.upToDateMsg', { ver: curVer }), 4500);
           } catch (err) {
             showCloudFeedback(err?.message || t('settings.gen.updateFailedMsg'), 5000);
@@ -13876,7 +14144,7 @@ const SettingsGeneralTab = defineComponent({
         `${srcLabel} · ${formatCloudSyncTimeText(cs.lastSyncedAtMs, cs.catalogUpdatedAt)}`
       );
 
-      const curVer = cs.currentPluginVersion || '1.5.0-th.1';
+      const curVer = cs.currentPluginVersion || '1.5.0-th.2';
       const latVer = cs.latestPluginVersion || curVer;
       const modeTag = cs.installMode === 'git' ? 'Git' : 'Read-Only';
       patchText(versionVal, `v${curVer}`);
@@ -21786,19 +22054,78 @@ function mountWindowOverlay() {
     return running.find((c) => String(c?.cascadeId || '').toLowerCase() === cidLower) || null;
   }
 
+  let quotaCyclePhase = '5h';
+  let quotaCycleInterval = null;
+  let quotaCycleFadeTimer = null;
+  let selectedModelSyncTimer = null;
+
+  function detectSelectedModelForSurface(surface, telemetry) {
+    if (!telemetry || !Array.isArray(telemetry.contextWindowModels) || !telemetry.contextWindowModels.length) {
+      return null;
+    }
+    const hostEl = surface?.capsuleHost;
+    const scopeRoot =
+      surface?.paneEl ||
+      hostEl?.closest?.('[data-cascade-id], form, [class*="composer"]') ||
+      hostEl?.parentElement?.parentElement ||
+      document.body;
+    if (!scopeRoot || typeof scopeRoot.querySelectorAll !== 'function') return null;
+
+    const btns = scopeRoot.querySelectorAll('button, [role="button"]');
+    for (let i = 0; i < btns.length; i += 1) {
+      const btn = btns[i];
+      if (!btn || isAnyOverlayHostNode(btn)) continue;
+      if (btn.getAttribute?.('data-testid') === 'permissions-selector-trigger') continue;
+      const text = cleanComposerButtonText(btn);
+      if (!text || text.length < 3 || text.length > 80) continue;
+      const resolved = resolveSelectedModelContextLimit(text, telemetry);
+      if (resolved) return resolved;
+    }
+    return null;
+  }
+
+  function applySelectedModelLimitToSlotCtx(slotCtx, selectedModel, totalTokens) {
+    if (!selectedModel || !(selectedModel.limitTokens > 0)) return slotCtx;
+    const limitTokens = selectedModel.limitTokens;
+    const usedTokens = Math.max(0, Number(totalTokens || 0));
+    const usedPct = Math.min(100, +((usedTokens / limitTokens) * 100).toFixed(2));
+    const dashOffset = +(RING_CIRCUMFERENCE * (1 - usedPct / 100)).toFixed(2);
+    const nextCtx = slotCtx.context
+      ? { ...slotCtx.context, totalTokens: usedTokens, limitTokens, compactionLimitTokens: limitTokens, usedPct }
+      : { totalTokens: usedTokens, limitTokens, compactionLimitTokens: limitTokens, usedPct };
+    return {
+      ...slotCtx,
+      context: nextCtx,
+      usedPct,
+      dashOffset,
+    };
+  }
+
   function buildSlotContextForSurface(telemetry, surface, activeSlotCtx) {
     if (!telemetry) return { hasTelemetry: false };
+    const selectedModel = detectSelectedModelForSurface(surface, telemetry);
     const targetCid = String(surface?.cascadeId || '').trim();
     const activeCid = String(telemetry.activeConversation?.cascadeId || '').trim();
     if (!targetCid || (targetCid !== '__new__' && activeCid && targetCid.toLowerCase() === activeCid.toLowerCase())) {
-      return activeSlotCtx;
+      const baseTotal = Number(activeSlotCtx.context?.totalTokens || 0);
+      return applySelectedModelLimitToSlotCtx(
+        { ...activeSlotCtx, quotaCyclePhase },
+        selectedModel,
+        baseTotal
+      );
     }
     const conv = targetCid === '__new__' ? null : findConversationSummary(telemetry, targetCid);
     const quotaDisplayMode = normalizeClientQuotaDisplayMode(telemetry.settings?.quotaDisplayMode);
     if (!conv) {
+      const emptyLimit = selectedModel?.limitTokens || 256000;
       return {
         hasTelemetry: true,
-        context: null,
+        context: {
+          totalTokens: 0,
+          limitTokens: emptyLimit,
+          compactionLimitTokens: emptyLimit,
+          usedPct: 0,
+        },
         usedPct: 0,
         dashOffset: RING_CIRCUMFERENCE,
         isRunning: false,
@@ -21812,16 +22139,19 @@ function mountWindowOverlay() {
         sessionTokens: null,
         quotas: telemetry.quotas,
         quotaDisplayMode,
+        quotaCyclePhase,
       };
     }
-    const usedPct = Number.isFinite(Number(conv.contextUsedPct))
+    const baseLimit = Number(conv.contextLimitTokens || 256000);
+    const basePct = Number.isFinite(Number(conv.contextUsedPct))
       ? Math.max(0, Math.min(100, Number(conv.contextUsedPct)))
       : 0;
-    const dashOffset = +(RING_CIRCUMFERENCE * (1 - usedPct / 100)).toFixed(2);
-    return {
+    const baseTotal = Number(conv.contextTotalTokens ?? Math.round((basePct / 100) * baseLimit));
+    const dashOffset = +(RING_CIRCUMFERENCE * (1 - basePct / 100)).toFixed(2);
+    const baseSlotCtx = {
       hasTelemetry: true,
       context: conv.contextBreakdown || conv.context || null,
-      usedPct,
+      usedPct: basePct,
       dashOffset,
       isRunning: Boolean(conv.isRunning),
       tps: conv.latestTokPerSec ?? null,
@@ -21835,15 +22165,20 @@ function mountWindowOverlay() {
       sessionTokens: conv.totalTokens ?? null,
       quotas: telemetry.quotas,
       quotaDisplayMode,
+      quotaCyclePhase,
     };
+    return applySelectedModelLimitToSlotCtx(baseSlotCtx, selectedModel, baseTotal);
   }
 
   function renderHoverWidgets() {
     const { telemetry, minuteTick } = telemetryStore.getState();
     let hoverData = telemetry;
-    const anchorCid = String(getActiveAnchorSurface()?.cascadeId || '').trim();
+    const anchorSurface = getActiveAnchorSurface();
+    const anchorCid = String(anchorSurface?.cascadeId || '').trim();
     const activeCid = String(telemetry?.activeConversation?.cascadeId || '').trim();
+    const selectedModel = detectSelectedModelForSurface(anchorSurface, telemetry);
     if (telemetry && anchorCid === '__new__') {
+      const emptyLimit = selectedModel?.limitTokens || 256000;
       hoverData = {
         ...telemetry,
         activeConversation: {
@@ -21861,12 +22196,12 @@ function mountWindowOverlay() {
           latestCacheHitPct: null,
           latestPromptTokens: 0,
           totalTokens: 0,
-          activeModelShort: '',
-          activeModelUpstream: '',
+          activeModelShort: selectedModel?.label || '',
+          activeModelUpstream: selectedModel?.label || '',
           context: {
             totalTokens: 0,
-            limitTokens: 256000,
-            compactionLimitTokens: 256000,
+            limitTokens: emptyLimit,
+            compactionLimitTokens: emptyLimit,
             usedPct: 0,
           },
         },
@@ -21878,9 +22213,12 @@ function mountWindowOverlay() {
     ) {
       const conv = findConversationSummary(telemetry, anchorCid);
       if (conv) {
-        const ctxLimit = Number(conv.contextLimitTokens || 256000);
-        const ctxPct = Number(conv.contextUsedPct || 0);
-        const ctxTotal = Number(conv.contextTotalTokens ?? Math.round((ctxPct / 100) * ctxLimit));
+        const baseLimit = Number(conv.contextLimitTokens || 256000);
+        const basePct = Number(conv.contextUsedPct || 0);
+        const ctxTotal = Number(conv.contextTotalTokens ?? Math.round((basePct / 100) * baseLimit));
+        const ctxLimit = selectedModel?.limitTokens || baseLimit;
+        const ctxPct =
+          ctxLimit > 0 ? Math.min(100, +((ctxTotal / ctxLimit) * 100).toFixed(2)) : 0;
         hoverData = {
           ...telemetry,
           activeConversation: {
@@ -21898,8 +22236,8 @@ function mountWindowOverlay() {
             latestCacheHitPct: conv.latestCacheHitPct ?? null,
             latestPromptTokens: conv.latestPromptTokens ?? 0,
             totalTokens: conv.totalTokens ?? 0,
-            activeModelShort: conv.modelShort || '',
-            activeModelUpstream: conv.modelUpstream || conv.modelShort || '',
+            activeModelShort: selectedModel?.label || conv.modelShort || '',
+            activeModelUpstream: selectedModel?.label || conv.modelUpstream || conv.modelShort || '',
             context: {
               ...(conv.contextBreakdown || conv.context || {}),
               totalTokens: ctxTotal,
@@ -21910,6 +22248,26 @@ function mountWindowOverlay() {
           },
         };
       }
+    } else if (telemetry && selectedModel && selectedModel.limitTokens > 0 && telemetry.activeConversation) {
+      const ac = telemetry.activeConversation;
+      const acCtx = ac.context || {};
+      const ctxTotal = Math.max(0, Number(acCtx.totalTokens || 0));
+      const ctxLimit = selectedModel.limitTokens;
+      const ctxPct = Math.min(100, +((ctxTotal / ctxLimit) * 100).toFixed(2));
+      hoverData = {
+        ...telemetry,
+        activeConversation: {
+          ...ac,
+          activeModelShort: ac.activeModelShort || selectedModel.label,
+          context: {
+            ...acCtx,
+            totalTokens: ctxTotal,
+            limitTokens: ctxLimit,
+            compactionLimitTokens: ctxLimit,
+            usedPct: ctxPct,
+          },
+        },
+      };
     }
     hoverWidgetHost.update({
       moduleKeys: normalizeClientHoverModules(telemetry?.settings?.hoverModules),
@@ -22101,6 +22459,7 @@ function mountWindowOverlay() {
       sessionTokens,
       quotas: telemetry.quotas,
       quotaDisplayMode: normalizeClientQuotaDisplayMode(telemetry.settings?.quotaDisplayMode),
+      quotaCyclePhase,
     };
     for (const s of getAllCapsuleSurfaces()) {
       const sCtx = buildSlotContextForSurface(telemetry, s, activeSlotCtx);
@@ -22348,6 +22707,7 @@ function mountWindowOverlay() {
           if (!isDockPlacementSynced(dock)) {
             scheduleDockSync();
           }
+          scheduleSelectedModelSync();
         });
         hostDomObserver.observe(document.body, {
           childList: true,
@@ -22371,10 +22731,64 @@ function mountWindowOverlay() {
   window.addEventListener?.('popstate', onPopState);
   navigator?.windowControlsOverlay?.addEventListener?.('geometrychange', onWindowResize);
 
+  function scheduleSelectedModelSync() {
+    if (disposed) return;
+    if (selectedModelSyncTimer) clearTimeout(selectedModelSyncTimer);
+    selectedModelSyncTimer = setTimeout(() => {
+      selectedModelSyncTimer = null;
+      if (disposed) return;
+      const telemetry = telemetryStore.getState().telemetry;
+      if (!telemetry) return;
+      let changed = false;
+      for (const s of getAllCapsuleSurfaces()) {
+        const m = detectSelectedModelForSurface(s, telemetry);
+        const sig = m ? `${m.groupId}:${m.limitTokens}` : '';
+        if (s._lastDetectedModelSig !== sig) {
+          s._lastDetectedModelSig = sig;
+          changed = true;
+        }
+      }
+      if (changed) {
+        renderCapsuleTelemetry();
+      }
+    }, 120);
+  }
+
+  function startQuotaCycleTicker() {
+    if (quotaCycleInterval) return;
+    const CYCLE_HOLD_MS = 6000;
+    quotaCycleInterval = setInterval(() => {
+      if (disposed || tooltipOpen || popoverOpen) return;
+      const reducedMotion =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+      if (reducedMotion) return;
+
+      const surfaces = getAllCapsuleSurfaces();
+      let hasCyclable = false;
+      for (const s of surfaces) {
+        for (const slot of s.capsuleSlots || []) {
+          if (slot && slot.canCycle && !slot.el?.hasAttribute?.('hidden')) {
+            hasCyclable = true;
+            break;
+          }
+        }
+        if (hasCyclable) break;
+      }
+      if (!hasCyclable) return;
+
+      quotaCyclePhase = quotaCyclePhase === '5h' ? 'weekly' : '5h';
+      renderCapsuleTelemetry();
+    }, CYCLE_HOLD_MS);
+  }
+
+  startQuotaCycleTicker();
+
   const watchdogTimer = setInterval(() => {
     if (disposed) return;
     syncHostRouteIfChanged();
     ensureWorkbenchThemeObserved();
+    scheduleSelectedModelSync();
     const dock = resolveRuntimeDockTarget();
     if (!isDockPlacementSynced(dock)) {
       ensureCapsuleDocked();
@@ -22482,6 +22896,18 @@ function mountWindowOverlay() {
       if (disposed) return;
       disposed = true;
       clearInterval(watchdogTimer);
+      if (quotaCycleInterval) {
+        clearInterval(quotaCycleInterval);
+        quotaCycleInterval = null;
+      }
+      if (quotaCycleFadeTimer) {
+        clearTimeout(quotaCycleFadeTimer);
+        quotaCycleFadeTimer = null;
+      }
+      if (selectedModelSyncTimer) {
+        clearTimeout(selectedModelSyncTimer);
+        selectedModelSyncTimer = null;
+      }
       if (hoverLeaveTimer) {
         clearTimeout(hoverLeaveTimer);
         hoverLeaveTimer = null;

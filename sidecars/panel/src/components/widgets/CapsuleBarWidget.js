@@ -59,19 +59,44 @@ export function createCapsuleSlotNode(slotIndex, initialMetric) {
 
   const isNone = initialMetric === 'none';
   const isCtx = initialMetric === 'context';
+  const isCycleQuota = initialMetric === 'gemini_cycle' || initialMetric === 'claude_cycle';
   const isQuota =
+    isCycleQuota ||
     initialMetric === 'quota_auto' ||
     initialMetric === 'gemini_5h' ||
     initialMetric === 'gemini_weekly' ||
     initialMetric === 'claude_5h' ||
     initialMetric === 'claude_weekly';
   const isRingSlot = isCtx || isQuota;
+  const xfade5hTag = h('span', { className: 'wm-quota-win-tag', 'data-win': '5h', text: '5h' });
+  const xfade5hText = h('span', {
+    className: 'wm-slot-text wm-ctx-pct wm-quota-text',
+    text: '--%',
+  });
+  const xfade5hLayer = h('span', { className: 'wm-xfade-layer is-active', 'data-phase': '5h' }, [
+    xfade5hTag,
+    xfade5hText,
+  ]);
+  const xfadeWkTag = h('span', { className: 'wm-quota-win-tag', 'data-win': '7d', text: '7d' });
+  const xfadeWkText = h('span', {
+    className: 'wm-slot-text wm-ctx-pct wm-quota-text',
+    text: '--%',
+  });
+  const xfadeWkLayer = h('span', { className: 'wm-xfade-layer', 'data-phase': 'weekly' }, [
+    xfadeWkTag,
+    xfadeWkText,
+  ]);
+  const xfadeWrap = h('span', { className: 'wm-quota-xfade-wrap', hidden: !isCycleQuota }, [
+    xfade5hLayer,
+    xfadeWkLayer,
+  ]);
   const textSpan = h('span', {
     className: isCtx
       ? 'wm-slot-text wm-ctx-pct'
       : isQuota
         ? 'wm-slot-text wm-ctx-pct wm-quota-text'
         : 'wm-slot-text',
+    hidden: isCycleQuota,
     text: isNone
       ? ''
       : isRingSlot
@@ -89,19 +114,21 @@ export function createCapsuleSlotNode(slotIndex, initialMetric) {
         ? 'wm-cap-slot'
         : isCtx
           ? 'wm-cap-slot wm-ctx-seg'
-          : isQuota
-            ? 'wm-cap-slot wm-ctx-seg wm-seg-quota'
-            : initialMetric === 'tps'
-              ? 'wm-cap-slot wm-seg-speed'
-              : initialMetric === 'ttft'
-                ? 'wm-cap-slot wm-seg-metric'
-                : 'wm-cap-slot wm-seg-cost',
+          : isCycleQuota
+            ? 'wm-cap-slot wm-ctx-seg wm-seg-quota has-win-tag'
+            : isQuota
+              ? 'wm-cap-slot wm-ctx-seg wm-seg-quota'
+              : initialMetric === 'tps'
+                ? 'wm-cap-slot wm-seg-speed'
+                : initialMetric === 'ttft'
+                  ? 'wm-cap-slot wm-seg-metric'
+                  : 'wm-cap-slot wm-seg-cost',
       hidden: isNone,
       'data-slot-idx': String(slotIndex),
       'data-metric': initialMetric,
       'data-vis-rank': isNone ? '' : String(slotIndex + 1),
     },
-    isRingSlot ? [ringSvg, textSpan] : [textSpan]
+    isCycleQuota ? [ringSvg, xfadeWrap] : isRingSlot ? [ringSvg, textSpan] : [textSpan]
   );
 
   return {
@@ -109,8 +136,16 @@ export function createCapsuleSlotNode(slotIndex, initialMetric) {
     ringSvg,
     ringFill,
     ringSegs,
+    xfadeWrap,
+    xfade5hLayer,
+    xfade5hText,
+    xfadeWkLayer,
+    xfadeWkText,
     textSpan,
     ringMounted: isRingSlot,
+    xfadeMounted: isCycleQuota,
+    textMounted: !isCycleQuota,
+    canCycle: false,
   };
 }
 
@@ -231,12 +266,15 @@ export function syncCapsuleSlotNodes(capsuleSlots, capsuleSeps, slotKeys, slotCt
     patchAttr(slot.el, 'data-vis-rank', String(visRank));
 
     if (pres.showRing && !slot.ringMounted) {
-      slot.el.insertBefore(slot.ringSvg, slot.textSpan);
+      slot.el.insertBefore(slot.ringSvg, slot.el.firstChild || null);
       slot.ringMounted = true;
     } else if (!pres.showRing && slot.ringMounted) {
       slot.ringSvg.remove();
       slot.ringMounted = false;
     }
+
+    const useXfade = Boolean(pres.cycleLayers && slot.xfadeWrap);
+    slot.canCycle = Boolean(pres.canCycle);
 
     const toneCls =
       pres.toneClass || (pres.danger ? 'tone-danger' : pres.warn ? 'tone-warn' : '');
@@ -244,7 +282,51 @@ export function syncCapsuleSlotNodes(capsuleSlots, capsuleSeps, slotKeys, slotCt
     patchAttr(slot.el, 'class', fullSegClass);
     const fullTextClass = `${pres.textClass}${toneCls ? ` ${toneCls}` : ''}`;
     patchAttr(slot.textSpan, 'class', fullTextClass);
-    syncAnimatedSlotText(slot, pres.metric, pres.text, pres.animSpec);
+
+    if (useXfade) {
+      cancelSlotNumberAnim(slot);
+      slot._numAnim = null;
+      if (slot.textMounted !== false && typeof slot.textSpan?.remove === 'function') {
+        slot.textSpan.remove();
+        slot.textMounted = false;
+      }
+      if (!slot.xfadeMounted && typeof slot.el.appendChild === 'function') {
+        slot.el.appendChild(slot.xfadeWrap);
+        slot.xfadeMounted = true;
+      }
+      patchAttr(slot.xfadeWrap, 'hidden', false);
+      const layers = pres.cycleLayers;
+      const isWkActive = layers.activePhase === 'weekly' && Boolean(layers.pWk);
+      if (layers.p5h) {
+        patchText(slot.xfade5hText, layers.p5h.text);
+        patchAttr(
+          slot.xfade5hText,
+          'class',
+          `wm-slot-text wm-ctx-pct wm-quota-text${layers.p5h.toneClass ? ` ${layers.p5h.toneClass}` : ''}`
+        );
+      }
+      if (layers.pWk) {
+        patchText(slot.xfadeWkText, layers.pWk.text);
+        patchAttr(
+          slot.xfadeWkText,
+          'class',
+          `wm-slot-text wm-ctx-pct wm-quota-text${layers.pWk.toneClass ? ` ${layers.pWk.toneClass}` : ''}`
+        );
+      }
+      patchClasses(slot.xfade5hLayer, { 'is-active': !isWkActive });
+      patchClasses(slot.xfadeWkLayer, { 'is-active': isWkActive });
+    } else {
+      if (slot.xfadeMounted && typeof slot.xfadeWrap?.remove === 'function') {
+        slot.xfadeWrap.remove();
+        slot.xfadeMounted = false;
+      }
+      if (slot.textMounted === false && typeof slot.el.appendChild === 'function') {
+        slot.el.appendChild(slot.textSpan);
+        slot.textMounted = true;
+      }
+      patchAttr(slot.textSpan, 'hidden', false);
+      syncAnimatedSlotText(slot, pres.metric, pres.text, pres.animSpec);
+    }
 
     if (pres.showRing) {
       const segList = Array.isArray(pres.ringSegments) ? pres.ringSegments : null;

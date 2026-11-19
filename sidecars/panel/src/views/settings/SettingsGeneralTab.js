@@ -236,7 +236,7 @@ export const SettingsGeneralTab = defineComponent({
 
     const pricingCountVal = h('strong', { className: 'cell-value', text: '—' });
     const pricingSyncSub = h('span', { className: 'cell-sub', text: t('quota.loading') });
-    const versionVal = h('strong', { className: 'cell-value', text: 'v1.5.0-th.1' });
+    const versionVal = h('strong', { className: 'cell-value', text: 'v1.5.0-th.2' });
     const versionSub = h('span', { className: 'cell-sub', text: t('settings.gen.checkingBtn') });
 
     const syncPricingBtnText = h('span', { text: t('settings.gen.syncBtn') });
@@ -312,7 +312,7 @@ export const SettingsGeneralTab = defineComponent({
               );
               return;
             }
-            const curVer = cs?.currentPluginVersion || '1.5.0-th.1';
+            const curVer = cs?.currentPluginVersion || '1.5.0-th.2';
             showCloudFeedback(t('settings.gen.upToDateMsg', { ver: curVer }), 4500);
           } catch (err) {
             showCloudFeedback(err?.message || t('settings.gen.updateFailedMsg'), 5000);
@@ -388,7 +388,7 @@ export const SettingsGeneralTab = defineComponent({
         `${srcLabel} · ${formatCloudSyncTimeText(cs.lastSyncedAtMs, cs.catalogUpdatedAt)}`
       );
 
-      const curVer = cs.currentPluginVersion || '1.5.0-th.1';
+      const curVer = cs.currentPluginVersion || '1.5.0-th.2';
       const latVer = cs.latestPluginVersion || curVer;
       const modeTag = cs.installMode === 'git' ? 'Git' : 'Read-Only';
       patchText(versionVal, `v${curVer}`);

@@ -239,6 +239,72 @@
   max-width: 59px;
 }
 
+/* 75px = 14px ring + 3px gap + 58px cross-fade container (14px tag + 3px gap + 41px text) */
+.wm-ctx-seg.has-win-tag {
+  gap: 3px;
+  width: 75px;
+  min-width: 75px;
+  max-width: 75px;
+}
+
+.wm-quota-xfade-wrap {
+  position: relative;
+  display: inline-block;
+  width: 58px;
+  min-width: 58px;
+  max-width: 58px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.wm-quota-xfade-wrap[hidden] {
+  display: none !important;
+}
+
+.wm-xfade-layer {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 650ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: opacity;
+  pointer-events: none;
+}
+
+.wm-xfade-layer.is-active {
+  opacity: 1;
+}
+
+.wm-quota-win-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  min-width: 14px;
+  max-width: 14px;
+  height: 14px;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.wm-quota-win-tag[data-win="7d"] {
+  color: var(--accent-primary);
+}
+
+.wm-cap-slot.has-win-tag .wm-ring-fill {
+  transition:
+    stroke-dashoffset 650ms cubic-bezier(0.4, 0, 0.2, 1),
+    stroke 650ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 @keyframes wm-ctx-ring-spin {
   from {
     transform: rotate(-90deg);
@@ -559,6 +625,7 @@
 :host(.wm-capsule-host[data-layout="ring-only"]) .wm-sep[data-sep-for-rank="4"],
 :host(.wm-capsule-host[data-layout="ring-only"]) .wm-sep[data-sep-for-rank="5"],
 :host(.wm-capsule-host[data-layout="ring-only"]) .wm-cap-slot[data-vis-rank="1"] .wm-ctx-pct,
+:host(.wm-capsule-host[data-layout="ring-only"]) .wm-cap-slot[data-vis-rank="1"] .wm-quota-xfade-wrap,
 :host(.wm-capsule-host[data-layout="ring-only"]) .wm-multi-label {
   display: none !important;
 }

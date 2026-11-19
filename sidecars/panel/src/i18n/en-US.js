@@ -105,8 +105,10 @@ export const I18N_MESSAGES_EN_US = Object.freeze({
   'capMetric.cache_hit': 'Cache Hit Rate (%)',
   'capMetric.session_tokens': 'Session Tokens',
   'capMetric.quota_auto': 'Auto Tightest Quota',
+  'capMetric.gemini_cycle': 'Gemini 5h ↔ Weekly',
   'capMetric.gemini_5h': 'Gemini 5h Quota',
   'capMetric.gemini_weekly': 'Gemini Weekly Quota',
+  'capMetric.claude_cycle': 'Claude 5h ↔ Weekly',
   'capMetric.claude_5h': 'Claude 5h Quota',
   'capMetric.claude_weekly': 'Claude Weekly Quota',
 

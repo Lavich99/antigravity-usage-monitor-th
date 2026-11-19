@@ -196,13 +196,18 @@ export function syncPoolQuotaRow(refs, item, idx, rowEl) {
     patchText(refs.usage5h, '');
     patchAttr(refs.left5h, 'title', null);
   }
+  const fmtPct1 = (v) => {
+    const n = Math.max(0, Math.min(100, Number(v || 0)));
+    const r = +n.toFixed(1);
+    return r >= 100 ? '100' : r.toFixed(1);
+  };
   patchText(
     refs.meta5h,
     has5h
       ? t('quota.usedAndLeft', {
           reset: formatCountdown(poolData.resetTime),
-          used: used5hVal.toFixed(1),
-          rem: rem5hVal.toFixed(1),
+          used: fmtPct1(used5hVal),
+          rem: fmtPct1(rem5hVal),
         })
       : fallbackMetaText
   );
@@ -248,8 +253,8 @@ export function syncPoolQuotaRow(refs, item, idx, rowEl) {
     hasWk
       ? t('quota.usedAndLeft', {
           reset: formatCountdown(wkResetRaw),
-          used: usedWkVal.toFixed(1),
-          rem: remWkVal.toFixed(1),
+          used: fmtPct1(usedWkVal),
+          rem: fmtPct1(remWkVal),
         })
       : fallbackMetaText
   );

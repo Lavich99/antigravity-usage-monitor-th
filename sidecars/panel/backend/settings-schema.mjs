@@ -31,13 +31,15 @@ export const TOPBAR_SLOT_KEYS = Object.freeze([
   'cache_hit',
   'session_tokens',
   'quota_auto',
+  'gemini_cycle',
   'gemini_5h',
   'gemini_weekly',
+  'claude_cycle',
   'claude_5h',
   'claude_weekly',
 ]);
 
-export const DEFAULT_TOPBAR_SLOTS = Object.freeze(['gemini_5h', 'context']);
+export const DEFAULT_TOPBAR_SLOTS = Object.freeze(['gemini_cycle', 'context']);
 export const MIN_TOPBAR_SLOTS = 1;
 export const MAX_TOPBAR_SLOTS = 2;
 

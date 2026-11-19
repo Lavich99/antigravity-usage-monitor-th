@@ -306,7 +306,7 @@
   transform: translateX(var(--tip-shift, -50%));
   width: max-content;
   min-width: 152px;
-  max-width: min(300px, calc(100% - 8px));
+  max-width: min(340px, calc(100% - 8px));
   padding: 5px 9px;
   background: var(--surface-panel);
   border: 1px solid var(--border-strong);

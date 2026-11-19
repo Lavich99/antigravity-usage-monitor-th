@@ -252,7 +252,7 @@
   word-break: break-word;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   overflow: hidden;
   pointer-events: none;
   animation: anim-popover-in var(--dur-instant) var(--ease-fast);

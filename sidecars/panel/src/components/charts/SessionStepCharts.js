@@ -11,6 +11,7 @@
 import { h, patchAttr, patchClasses, patchStyleVar, patchText } from '../../core/domPatch.js';
 import {
   formatMetric,
+  formatStepDateTime,
   formatTokens,
   formatTokensPrecise,
   formatUsd,
@@ -800,7 +801,8 @@ export function createSessionLineChart() {
     patchAttr(peakPill, 'hidden', true);
     patchAttr(tooltipEl, 'hidden', false);
 
-    patchText(tipHeadLeft, pt.stepTag);
+    const stepTimeStr = formatStepDateTime(pt.st?.createdAtMs);
+    patchText(tipHeadLeft, stepTimeStr ? `${pt.stepTag} · ${stepTimeStr}` : pt.stepTag);
     patchText(tipHeadRight, pt.modelText);
     patchText(
       tipMainLeft,
@@ -1574,7 +1576,8 @@ export function createModelFitChart() {
     patchAttr(hoverRawDot, 'cy', sp.rawY.toFixed(1));
 
     patchAttr(tooltipEl, 'hidden', false);
-    patchText(tipHeadLeft, sp.stepTag);
+    const stepTimeStr = formatStepDateTime(sp.st?.createdAtMs);
+    patchText(tipHeadLeft, stepTimeStr ? `${sp.stepTag} · ${stepTimeStr}` : sp.stepTag);
     patchText(tipHeadRight, sp.modelText);
     patchText(tipMainLeft, `${chartL10n('Fit', 'Fit')} ${formatChartMetricValue(currentMetric, sp.fitVal)}`);
     patchText(tipMainRight, `${chartL10n('ค่าจริง', 'Obs')} ${formatChartMetricValue(currentMetric, sp.rawVal)}`);

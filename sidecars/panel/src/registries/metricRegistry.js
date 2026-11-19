@@ -21,8 +21,13 @@ import {
 import { isEnglishLocale, isThaiLocale, t } from '../i18n/index.js';
 
 export const CAPSULE_METRIC_KEYS = Object.freeze([
-  'gemini_5h',
+  'gemini_cycle',
   'context',
+  'gemini_5h',
+  'gemini_weekly',
+  'claude_cycle',
+  'claude_5h',
+  'claude_weekly',
   'tps',
   'ttft',
   'avg_tps',
@@ -31,9 +36,6 @@ export const CAPSULE_METRIC_KEYS = Object.freeze([
   'cache_hit',
   'session_tokens',
   'quota_auto',
-  'gemini_weekly',
-  'claude_5h',
-  'claude_weekly',
 ]);
 
 export const OVERVIEW_METRIC_KEYS = Object.freeze([
@@ -228,7 +230,10 @@ export function formatCompactCapsuleCost(costUsd) {
 export function formatCapsulePctText(val) {
   const num = Number(val);
   if (!Number.isFinite(num)) return '--%';
-  return `${Math.max(0, Math.min(100, num)).toFixed(2)}%`;
+  const clamped = Math.max(0, Math.min(100, num));
+  const fixed2 = +clamped.toFixed(2);
+  if (fixed2 >= 100) return '100%';
+  return `${fixed2.toFixed(2)}%`;
 }
 
 function formatCapsuleTpsText(val) {
@@ -514,19 +519,87 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
     };
   }
 
-  const quotaSum = !slotCtx.hasTelemetry
-    ? null
-    : metricKey === 'quota_auto'
-      ? resolveQuotaCapsuleSummary(slotCtx.quotas)
-      : resolveSpecificQuotaSlotSummary(slotCtx.quotas, metricKey);
+  const isCycleQuota = metricKey === 'gemini_cycle' || metricKey === 'claude_cycle';
+  const cyclePrefix = metricKey === 'claude_cycle' ? 'claude' : 'gemini';
+  const cyclePhase = slotCtx.quotaCyclePhase === 'weekly' ? 'weekly' : '5h';
+
+  let quotaSum = null;
+  let windowTag = '';
+  let canCycle = false;
+  let cycleLayers = null;
   const quotaMode = slotCtx.quotaDisplayMode === 'used' ? 'used' : 'left';
+  const buildQuotaDisplay = (sum) => {
+    if (!sum) return { text: '--%', toneClass: '' };
+    const rem = Math.max(0, Math.min(100, sum.exactPct ?? sum.roundedPct));
+    const disp = Math.max(
+      0,
+      Math.min(100, +(quotaMode === 'used' ? 100 - rem : rem).toFixed(2))
+    );
+    const danger = rem <= 15;
+    const warn = !danger && rem <= 30;
+    return {
+      text: formatCapsulePctText(disp),
+      toneClass: danger ? 'tone-danger' : warn ? 'tone-warn' : '',
+    };
+  };
+
+  if (slotCtx.hasTelemetry) {
+    if (isCycleQuota) {
+      const sum5h = resolveSpecificQuotaSlotSummary(slotCtx.quotas, `${cyclePrefix}_5h`);
+      const sumWk = resolveSpecificQuotaSlotSummary(slotCtx.quotas, `${cyclePrefix}_weekly`);
+      canCycle = Boolean(sum5h && sumWk);
+      if (canCycle) {
+        quotaSum = cyclePhase === 'weekly' ? sumWk : sum5h;
+        windowTag = cyclePhase === 'weekly' ? '7d' : '5h';
+        cycleLayers = {
+          activePhase: cyclePhase,
+          p5h: { tag: '5h', ...buildQuotaDisplay(sum5h) },
+          pWk: { tag: '7d', ...buildQuotaDisplay(sumWk) },
+        };
+      } else if (sum5h) {
+        quotaSum = sum5h;
+        windowTag = '5h';
+        cycleLayers = {
+          activePhase: '5h',
+          p5h: { tag: '5h', ...buildQuotaDisplay(sum5h) },
+          pWk: null,
+        };
+      } else if (sumWk) {
+        quotaSum = sumWk;
+        windowTag = '7d';
+        cycleLayers = {
+          activePhase: 'weekly',
+          p5h: null,
+          pWk: { tag: '7d', ...buildQuotaDisplay(sumWk) },
+        };
+      }
+    } else if (metricKey === 'quota_auto') {
+      quotaSum = resolveQuotaCapsuleSummary(slotCtx.quotas);
+    } else {
+      quotaSum = resolveSpecificQuotaSlotSummary(slotCtx.quotas, metricKey);
+    }
+  } else if (isCycleQuota) {
+    windowTag = cyclePhase === 'weekly' ? '7d' : '5h';
+    cycleLayers = {
+      activePhase: '5h',
+      p5h: { tag: '5h', text: '--%', toneClass: '' },
+      pWk: null,
+    };
+  }
+
+  const segClassBase = isCycleQuota
+    ? 'wm-cap-slot wm-ctx-seg wm-seg-quota has-win-tag'
+    : 'wm-cap-slot wm-ctx-seg wm-seg-quota';
   if (!quotaSum) {
     return {
       hidden: false,
       metric: metricKey,
-      segClass: 'wm-cap-slot wm-ctx-seg wm-seg-quota',
+      segClass: segClassBase,
       textClass: 'wm-slot-text wm-ctx-pct wm-quota-text',
       showRing: true,
+      windowTag,
+      canCycle: false,
+      cycleLayers,
       dashOffset: ringCircumference,
       text: '--%',
       toneClass: '',
@@ -547,9 +620,12 @@ export function resolveCapsuleMetricPresentation(metricKey, slotCtx, ringCircumf
   return {
     hidden: false,
     metric: metricKey,
-    segClass: 'wm-cap-slot wm-ctx-seg wm-seg-quota',
+    segClass: segClassBase,
     textClass: 'wm-slot-text wm-ctx-pct wm-quota-text',
     showRing: true,
+    windowTag,
+    canCycle,
+    cycleLayers,
     dashOffset: quotaDashOffset,
     text: formatCapsulePctText(displayPct),
     animSpec: { value: displayPct, format: formatCapsulePctText },
