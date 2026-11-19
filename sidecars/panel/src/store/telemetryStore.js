@@ -538,9 +538,6 @@ function isEquivalentTelemetry(prev, next) {
   if (Boolean(pSet?.moveComposerPermissionLeft) !== Boolean(nSet?.moveComposerPermissionLeft)) {
     return false;
   }
-  if ((pSet?.enableCliStatusLine !== false) !== (nSet?.enableCliStatusLine !== false)) {
-    return false;
-  }
   if ((pSet?.showTopbarMultiSession !== false) !== (nSet?.showTopbarMultiSession !== false)) {
     return false;
   }
@@ -1218,9 +1215,6 @@ export async function saveSettingsPatch(patch) {
     safePatch.weeklyLimitMode =
       mode === 'custom_tokens' || mode === 'custom_cost' ? mode : 'official';
   }
-  if (Object.prototype.hasOwnProperty.call(safePatch, 'enableCliStatusLine')) {
-    safePatch.enableCliStatusLine = Boolean(safePatch.enableCliStatusLine);
-  }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'moveComposerPermissionLeft')) {
     safePatch.moveComposerPermissionLeft = Boolean(safePatch.moveComposerPermissionLeft);
   }
@@ -1278,11 +1272,6 @@ export async function saveSettingsPatch(patch) {
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'orchestratorIdMode')) {
     safePatch.orchestratorIdMode = normalizeClientOrchestratorIdMode(safePatch.orchestratorIdMode);
-  }
-  if (Object.prototype.hasOwnProperty.call(safePatch, 'standalonePort')) {
-    const numPort = Number(safePatch.standalonePort);
-    safePatch.standalonePort =
-      Number.isInteger(numPort) && numPort >= 1024 && numPort <= 65535 ? numPort : 0;
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'windowMountMode')) {
     const normMount = normalizeClientWindowMountMode(

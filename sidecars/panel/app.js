@@ -3189,9 +3189,6 @@ function isEquivalentTelemetry(prev, next) {
   if (Boolean(pSet?.moveComposerPermissionLeft) !== Boolean(nSet?.moveComposerPermissionLeft)) {
     return false;
   }
-  if ((pSet?.enableCliStatusLine !== false) !== (nSet?.enableCliStatusLine !== false)) {
-    return false;
-  }
   if ((pSet?.showTopbarMultiSession !== false) !== (nSet?.showTopbarMultiSession !== false)) {
     return false;
   }
@@ -3869,9 +3866,6 @@ async function saveSettingsPatch(patch) {
     safePatch.weeklyLimitMode =
       mode === 'custom_tokens' || mode === 'custom_cost' ? mode : 'official';
   }
-  if (Object.prototype.hasOwnProperty.call(safePatch, 'enableCliStatusLine')) {
-    safePatch.enableCliStatusLine = Boolean(safePatch.enableCliStatusLine);
-  }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'moveComposerPermissionLeft')) {
     safePatch.moveComposerPermissionLeft = Boolean(safePatch.moveComposerPermissionLeft);
   }
@@ -3929,11 +3923,6 @@ async function saveSettingsPatch(patch) {
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'orchestratorIdMode')) {
     safePatch.orchestratorIdMode = normalizeClientOrchestratorIdMode(safePatch.orchestratorIdMode);
-  }
-  if (Object.prototype.hasOwnProperty.call(safePatch, 'standalonePort')) {
-    const numPort = Number(safePatch.standalonePort);
-    safePatch.standalonePort =
-      Number.isInteger(numPort) && numPort >= 1024 && numPort <= 65535 ? numPort : 0;
   }
   if (Object.prototype.hasOwnProperty.call(safePatch, 'windowMountMode')) {
     const normMount = normalizeClientWindowMountMode(
@@ -14049,7 +14038,6 @@ const SettingsStructureTab = defineComponent({
     let draftMoveComposerPermLeft = true;
     let draftPopoverWidthMode = 'auto';
     let draftPopoverWidth = DEFAULT_CLIENT_POPOVER_WIDTH;
-    let draftEnableCliStatusLine = false;
     let draftShowTopbarMulti = false;
     let draftQuotaDisplayMode = 'left';
     let draftTopbarSlots = [...DEFAULT_CLIENT_TOPBAR_SLOTS];
@@ -14075,7 +14063,6 @@ const SettingsStructureTab = defineComponent({
         enableWindowOverlay: draftWindowMountMode !== 'sidebar',
         popoverWidthMode: draftPopoverWidthMode,
         popoverWidth: draftPopoverWidth,
-        enableCliStatusLine: draftEnableCliStatusLine,
         showTopbarMultiSession: draftShowTopbarMulti,
         quotaDisplayMode: draftQuotaDisplayMode,
         topbarCapsuleSlots: draftTopbarSlots,
@@ -14168,10 +14155,6 @@ const SettingsStructureTab = defineComponent({
       className: 'form-label',
       text: t('settings.str.multiToggle'),
     });
-    const cliCapsuleLabelEl = h('span', {
-      className: 'form-label',
-      text: t('settings.str.cliCapsuleToggle'),
-    });
     const quotaDisplayModeLabelEl = h('span', {
       className: 'form-label',
       text: t('settings.str.quotaDisplayModeLabel'),
@@ -14249,19 +14232,6 @@ const SettingsStructureTab = defineComponent({
       },
     });
 
-    const cliCapsuleToggle = SegmentedControl({
-      ariaLabel: t('settings.str.cliCapsuleToggle'),
-      modelValue: 'on',
-      options: getEnableToggleOptions(),
-      onUpdateModelValue: (val) => {
-        draftEnableCliStatusLine = val !== 'off';
-        syncMountSectionMeta();
-        void persistStructurePatch(mountSection, {
-          enableCliStatusLine: draftEnableCliStatusLine,
-        });
-      },
-    });
-
     const composerPermLeftToggle = SegmentedControl({
       ariaLabel: t('settings.str.composerPermLeftToggle'),
       modelValue: 'off',
@@ -14326,7 +14296,6 @@ const SettingsStructureTab = defineComponent({
         draftPopoverWidthMode = 'auto';
         draftPopoverWidth = DEFAULT_CLIENT_POPOVER_WIDTH;
         popoverWidthStepper.setProps({ modelValue: DEFAULT_CLIENT_POPOVER_WIDTH });
-        draftEnableCliStatusLine = false;
         draftShowTopbarMulti = false;
         draftQuotaDisplayMode = 'left';
         draftTopbarSlots = [...DEFAULT_CLIENT_TOPBAR_SLOTS];
@@ -14340,7 +14309,6 @@ const SettingsStructureTab = defineComponent({
             moveComposerPermissionLeft: true,
             popoverWidthMode: 'auto',
             popoverWidth: DEFAULT_CLIENT_POPOVER_WIDTH,
-            enableCliStatusLine: false,
             showTopbarMultiSession: false,
             quotaDisplayMode: 'left',
             topbarCapsuleSlots: [...DEFAULT_CLIENT_TOPBAR_SLOTS],
@@ -14366,10 +14334,6 @@ const SettingsStructureTab = defineComponent({
         h('div', { className: 'settings-inline-row' }, [
           multiToggleLabelEl,
           multiSessionToggle.el,
-        ]),
-        h('div', { className: 'settings-inline-row' }, [
-          cliCapsuleLabelEl,
-          cliCapsuleToggle.el,
         ]),
         h('div', { className: 'settings-inline-row' }, [
           quotaDisplayModeLabelEl,
@@ -14410,10 +14374,6 @@ const SettingsStructureTab = defineComponent({
         modelValue: draftShowTopbarMulti ? 'show' : 'hide',
         options: getMultiToggleOptions(),
       });
-      cliCapsuleToggle.setProps({
-        modelValue: draftEnableCliStatusLine ? 'on' : 'off',
-        options: getEnableToggleOptions(),
-      });
       quotaDisplayModeToggle.setProps({
         modelValue: draftQuotaDisplayMode,
         options: getQuotaDisplayModeOptions(),
@@ -14432,7 +14392,6 @@ const SettingsStructureTab = defineComponent({
         draftMoveComposerPermLeft === true &&
         draftPopoverWidthMode === 'auto' &&
         draftPopoverWidth === DEFAULT_CLIENT_POPOVER_WIDTH &&
-        draftEnableCliStatusLine === false &&
         draftShowTopbarMulti === false &&
         draftQuotaDisplayMode === 'left' &&
         isSameList(draftTopbarSlots, DEFAULT_CLIENT_TOPBAR_SLOTS);
@@ -15001,7 +14960,6 @@ const SettingsStructureTab = defineComponent({
       draftMoveComposerPermLeft = settings.moveComposerPermissionLeft === true;
       draftPopoverWidthMode = normalizeClientPopoverWidthMode(settings.popoverWidthMode);
       draftPopoverWidth = normalizeClientPopoverWidth(settings.popoverWidth);
-      draftEnableCliStatusLine = settings.enableCliStatusLine !== false;
       draftShowTopbarMulti = settings.showTopbarMultiSession !== false;
       draftQuotaDisplayMode = normalizeClientQuotaDisplayMode(settings.quotaDisplayMode);
       draftTopbarSlots = normalizeClientTopbarSlots(settings.topbarCapsuleSlots);
@@ -15038,7 +14996,6 @@ const SettingsStructureTab = defineComponent({
       patchText(popoverWidthHintEl, t('settings.str.popoverWidthHint'));
       popoverWidthStepper.setProps({ ariaLabel: t('settings.str.popoverWidthLabel') });
       patchText(multiToggleLabelEl, t('settings.str.multiToggle'));
-      patchText(cliCapsuleLabelEl, t('settings.str.cliCapsuleToggle'));
       patchText(quotaDisplayModeLabelEl, t('settings.str.quotaDisplayModeLabel'));
       patchText(capsuleSlotsLabelEl, t('settings.str.capsuleSlotsLabel'));
 
@@ -15108,7 +15065,6 @@ const SettingsStructureTab = defineComponent({
       popoverWidthStepper.destroy();
       popoverWidthModeToggle.destroy();
       multiSessionToggle.destroy();
-      cliCapsuleToggle.destroy();
       quotaDisplayModeToggle.destroy();
       topbarSlotsList.destroy();
       hoverModulesList.destroy();
@@ -15134,7 +15090,6 @@ const SettingsStructureTab = defineComponent({
         stepTablePreview,
         windowMountSelect,
         multiSessionToggle,
-        cliCapsuleToggle,
         topbarSlotsList,
         hoverModulesList,
         overviewModulesList,
@@ -19612,7 +19567,7 @@ function findSecondarySplitDockTargets(primaryDock, mountMode, portalNode = null
   const out = [];
 
   // 1. If Antigravity Split View renders multiple @container/titlebar headers (one per split pane)
-  if (mountMode !== 'composer' && primaryDock.kind !== 'ide-titlebar') {
+  if (mountMode !== 'composer') {
     const titlebars = document.querySelectorAll('[class*="@container/titlebar"]');
     for (const tb of titlebars) {
       if (!tb || usedTitlebars.has(tb) || isAnyOverlayHostNode(tb)) continue;
@@ -19704,8 +19659,6 @@ function resolveActiveDockTarget(options = undefined) {
       };
     }
   }
-  const ideTarget = findIdeWorkbenchTitlebar();
-  if (ideTarget) return ideTarget;
   const titlebar = findHostTitlebar();
   return buildFlowTitlebarDescriptor(titlebar);
 }
@@ -20765,7 +20718,7 @@ function mountWindowOverlay() {
 
   function updateFixedFallbackPosition() {
     const dockMode = capsuleHost.getAttribute('data-dock');
-    if (dockMode === 'flow' || dockMode === 'ide-titlebar' || dockMode === 'composer') {
+    if (dockMode === 'flow' || dockMode === 'composer') {
       capsuleHost.style.top = '';
       capsuleHost.style.right = '';
       return;
@@ -21353,26 +21306,6 @@ function mountWindowOverlay() {
         dockTarget.needsAutoMarginTransfer ? '1' : null
       );
       syncSurfaceComposerPermLayout(surface, dockTarget.permLayout, wantPermLeft);
-    } else if (kind === 'ide-titlebar') {
-      clearSurfaceComposerPermLayout(surface);
-      patchAttr(hostEl, 'data-composer-perm-left', null);
-      if (surface.patchedActionToolbar !== actionToolbar) {
-        restoreSurfaceActionToolbar(surface);
-        if (actionToolbar?.style) {
-          surface.patchedActionToolbar = actionToolbar;
-          surface.patchedActionToolbarPrevMargin = actionToolbar.style.marginLeft || '';
-          actionToolbar.style.marginLeft = '0px';
-        }
-      }
-      if (hostEl.parentElement !== targetContainer || targetContainer.firstChild !== hostEl) {
-        if (targetContainer.firstChild) {
-          targetContainer.insertBefore(hostEl, targetContainer.firstChild);
-        } else {
-          targetContainer.appendChild(hostEl);
-        }
-      }
-      patchAttr(hostEl, 'data-dock', 'ide-titlebar');
-      patchAttr(hostEl, 'data-composer-push', null);
     } else {
       clearSurfaceComposerPermLayout(surface);
       patchAttr(hostEl, 'data-composer-perm-left', null);

@@ -115,7 +115,6 @@ export const SettingsStructureTab = defineComponent({
     let draftMoveComposerPermLeft = true;
     let draftPopoverWidthMode = 'auto';
     let draftPopoverWidth = DEFAULT_CLIENT_POPOVER_WIDTH;
-    let draftEnableCliStatusLine = false;
     let draftShowTopbarMulti = false;
     let draftQuotaDisplayMode = 'left';
     let draftTopbarSlots = [...DEFAULT_CLIENT_TOPBAR_SLOTS];
@@ -141,7 +140,6 @@ export const SettingsStructureTab = defineComponent({
         enableWindowOverlay: draftWindowMountMode !== 'sidebar',
         popoverWidthMode: draftPopoverWidthMode,
         popoverWidth: draftPopoverWidth,
-        enableCliStatusLine: draftEnableCliStatusLine,
         showTopbarMultiSession: draftShowTopbarMulti,
         quotaDisplayMode: draftQuotaDisplayMode,
         topbarCapsuleSlots: draftTopbarSlots,
@@ -234,10 +232,6 @@ export const SettingsStructureTab = defineComponent({
       className: 'form-label',
       text: t('settings.str.multiToggle'),
     });
-    const cliCapsuleLabelEl = h('span', {
-      className: 'form-label',
-      text: t('settings.str.cliCapsuleToggle'),
-    });
     const quotaDisplayModeLabelEl = h('span', {
       className: 'form-label',
       text: t('settings.str.quotaDisplayModeLabel'),
@@ -315,19 +309,6 @@ export const SettingsStructureTab = defineComponent({
       },
     });
 
-    const cliCapsuleToggle = SegmentedControl({
-      ariaLabel: t('settings.str.cliCapsuleToggle'),
-      modelValue: 'on',
-      options: getEnableToggleOptions(),
-      onUpdateModelValue: (val) => {
-        draftEnableCliStatusLine = val !== 'off';
-        syncMountSectionMeta();
-        void persistStructurePatch(mountSection, {
-          enableCliStatusLine: draftEnableCliStatusLine,
-        });
-      },
-    });
-
     const composerPermLeftToggle = SegmentedControl({
       ariaLabel: t('settings.str.composerPermLeftToggle'),
       modelValue: 'off',
@@ -392,7 +373,6 @@ export const SettingsStructureTab = defineComponent({
         draftPopoverWidthMode = 'auto';
         draftPopoverWidth = DEFAULT_CLIENT_POPOVER_WIDTH;
         popoverWidthStepper.setProps({ modelValue: DEFAULT_CLIENT_POPOVER_WIDTH });
-        draftEnableCliStatusLine = false;
         draftShowTopbarMulti = false;
         draftQuotaDisplayMode = 'left';
         draftTopbarSlots = [...DEFAULT_CLIENT_TOPBAR_SLOTS];
@@ -406,7 +386,6 @@ export const SettingsStructureTab = defineComponent({
             moveComposerPermissionLeft: true,
             popoverWidthMode: 'auto',
             popoverWidth: DEFAULT_CLIENT_POPOVER_WIDTH,
-            enableCliStatusLine: false,
             showTopbarMultiSession: false,
             quotaDisplayMode: 'left',
             topbarCapsuleSlots: [...DEFAULT_CLIENT_TOPBAR_SLOTS],
@@ -432,10 +411,6 @@ export const SettingsStructureTab = defineComponent({
         h('div', { className: 'settings-inline-row' }, [
           multiToggleLabelEl,
           multiSessionToggle.el,
-        ]),
-        h('div', { className: 'settings-inline-row' }, [
-          cliCapsuleLabelEl,
-          cliCapsuleToggle.el,
         ]),
         h('div', { className: 'settings-inline-row' }, [
           quotaDisplayModeLabelEl,
@@ -476,10 +451,6 @@ export const SettingsStructureTab = defineComponent({
         modelValue: draftShowTopbarMulti ? 'show' : 'hide',
         options: getMultiToggleOptions(),
       });
-      cliCapsuleToggle.setProps({
-        modelValue: draftEnableCliStatusLine ? 'on' : 'off',
-        options: getEnableToggleOptions(),
-      });
       quotaDisplayModeToggle.setProps({
         modelValue: draftQuotaDisplayMode,
         options: getQuotaDisplayModeOptions(),
@@ -498,7 +469,6 @@ export const SettingsStructureTab = defineComponent({
         draftMoveComposerPermLeft === true &&
         draftPopoverWidthMode === 'auto' &&
         draftPopoverWidth === DEFAULT_CLIENT_POPOVER_WIDTH &&
-        draftEnableCliStatusLine === false &&
         draftShowTopbarMulti === false &&
         draftQuotaDisplayMode === 'left' &&
         isSameList(draftTopbarSlots, DEFAULT_CLIENT_TOPBAR_SLOTS);
@@ -1067,7 +1037,6 @@ export const SettingsStructureTab = defineComponent({
       draftMoveComposerPermLeft = settings.moveComposerPermissionLeft === true;
       draftPopoverWidthMode = normalizeClientPopoverWidthMode(settings.popoverWidthMode);
       draftPopoverWidth = normalizeClientPopoverWidth(settings.popoverWidth);
-      draftEnableCliStatusLine = settings.enableCliStatusLine !== false;
       draftShowTopbarMulti = settings.showTopbarMultiSession !== false;
       draftQuotaDisplayMode = normalizeClientQuotaDisplayMode(settings.quotaDisplayMode);
       draftTopbarSlots = normalizeClientTopbarSlots(settings.topbarCapsuleSlots);
@@ -1104,7 +1073,6 @@ export const SettingsStructureTab = defineComponent({
       patchText(popoverWidthHintEl, t('settings.str.popoverWidthHint'));
       popoverWidthStepper.setProps({ ariaLabel: t('settings.str.popoverWidthLabel') });
       patchText(multiToggleLabelEl, t('settings.str.multiToggle'));
-      patchText(cliCapsuleLabelEl, t('settings.str.cliCapsuleToggle'));
       patchText(quotaDisplayModeLabelEl, t('settings.str.quotaDisplayModeLabel'));
       patchText(capsuleSlotsLabelEl, t('settings.str.capsuleSlotsLabel'));
 
@@ -1174,7 +1142,6 @@ export const SettingsStructureTab = defineComponent({
       popoverWidthStepper.destroy();
       popoverWidthModeToggle.destroy();
       multiSessionToggle.destroy();
-      cliCapsuleToggle.destroy();
       quotaDisplayModeToggle.destroy();
       topbarSlotsList.destroy();
       hoverModulesList.destroy();
@@ -1200,7 +1167,6 @@ export const SettingsStructureTab = defineComponent({
         stepTablePreview,
         windowMountSelect,
         multiSessionToggle,
-        cliCapsuleToggle,
         topbarSlotsList,
         hoverModulesList,
         overviewModulesList,

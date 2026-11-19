@@ -3,10 +3,9 @@
   "version": "1.5.0",
   "private": true,
   "type": "module",
-  "description": "Sidecar backend and web UI for Antigravity Usage & Speed Monitor.",
+  "description": "Sidecar backend and web UI for Antigravity Usage & Speed Monitor (Antigravity App).",
   "scripts": {
     "build": "node scripts/build-bundle.mjs",
-    "standalone": "node standalone.mjs",
     "test": "node --test test/*.test.mjs"
   }
 }

@@ -493,19 +493,6 @@ export function normalizeCustomModelPricing(value) {
   return out;
 }
 
-/**
- * Web `0` `1024..65535` 
- *
- * @param {unknown} port
- * @returns {number}
- */
-export function normalizeStandalonePort(port) {
-  const num = Number(port);
-  if (!Number.isInteger(num) || num <= 0) return 0;
-  if (num >= 1024 && num <= 65535) return num;
-  return 0;
-}
-
 export const DEFAULT_SETTINGS_SCHEMA = Object.freeze({
   language: 'th-TH',
   themeAccent: 'host',
@@ -523,8 +510,6 @@ export const DEFAULT_SETTINGS_SCHEMA = Object.freeze({
   moveComposerPermissionLeft: true,
   popoverWidthMode: 'auto',
   popoverWidth: DEFAULT_POPOVER_WIDTH,
-  enableCliStatusLine: false,
-  standalonePort: 0,
   showTopbarMultiSession: false,
   quotaDisplayMode: 'left',
   topbarCapsuleSlots: DEFAULT_TOPBAR_SLOTS,
@@ -562,8 +547,6 @@ export function createDefaultSettingsObject() {
     moveComposerPermissionLeft: DEFAULT_SETTINGS_SCHEMA.moveComposerPermissionLeft,
     popoverWidthMode: DEFAULT_SETTINGS_SCHEMA.popoverWidthMode,
     popoverWidth: DEFAULT_SETTINGS_SCHEMA.popoverWidth,
-    enableCliStatusLine: DEFAULT_SETTINGS_SCHEMA.enableCliStatusLine,
-    standalonePort: DEFAULT_SETTINGS_SCHEMA.standalonePort,
     showTopbarMultiSession: DEFAULT_SETTINGS_SCHEMA.showTopbarMultiSession,
     quotaDisplayMode: DEFAULT_SETTINGS_SCHEMA.quotaDisplayMode,
     topbarCapsuleSlots: [...DEFAULT_TOPBAR_SLOTS],
@@ -626,11 +609,6 @@ export function normalizeFullSettings(rawInput) {
         : safeRaw.moveComposerPermissionLeft === true,
     popoverWidthMode: normalizePopoverWidthMode(safeRaw.popoverWidthMode),
     popoverWidth: normalizePopoverWidth(safeRaw.popoverWidth),
-    enableCliStatusLine:
-      safeRaw.enableCliStatusLine === undefined
-        ? DEFAULT_SETTINGS_SCHEMA.enableCliStatusLine
-        : safeRaw.enableCliStatusLine !== false,
-    standalonePort: normalizeStandalonePort(safeRaw.standalonePort),
     showTopbarMultiSession:
       safeRaw.showTopbarMultiSession === undefined
         ? DEFAULT_SETTINGS_SCHEMA.showTopbarMultiSession

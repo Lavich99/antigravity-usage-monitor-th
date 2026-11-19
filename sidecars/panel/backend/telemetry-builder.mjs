@@ -18,13 +18,11 @@ import {
   summarizeTtft,
 } from '../speed-metrics.mjs';
 import {
-  CLI_STATUS_SNAPSHOT_FILE,
   computeRuntimeCodeVersion,
   inFlightRequests,
   loadSettings,
   lsRuntimeEndpoint,
   roundMetric,
-  saveJson,
   trajectoryCache,
 } from './config.mjs';
 import { getContextWindowGroups, getContextWindowModels } from './context-windows.mjs';
@@ -52,7 +50,6 @@ const POOL_PRIORITY_ORDER = ['Gemini', 'Argon', 'Carbon', 'Claude & GPT'];
 const inFlightTelemetrySources = new Map();
 const trajectoryModelFacts = new WeakMap();
 let lastMainPreparation = null;
-let lastCliSnapshotSig = '';
 
 function buildDiscoveredModelsList(
   clientConfigs,
@@ -1812,59 +1809,7 @@ export async function buildTelemetryPayloadInternal(
     ),
   };
 
-  if (lsRuntimeEndpoint.addr !== 'test.invalid' && settings.enableCliStatusLine !== false) {
-    try {
-      const snap = buildCliStatusSnapshot(finalPayload, Date.now());
-      const snapSig = JSON.stringify({ ...snap, updatedAtMs: 0 });
-      if (snapSig !== lastCliSnapshotSig) {
-        lastCliSnapshotSig = snapSig;
-        saveJson(CLI_STATUS_SNAPSHOT_FILE, snap);
-      }
-    } catch {
-      // Snapshot write is best-effort and must never block telemetry
-    }
-  }
-
   return finalPayload;
-}
-
-export function buildCliStatusSnapshot(finalPayload, updatedAtMs = Date.now()) {
-  const ac = finalPayload?.activeConversation || {};
-  const capSource = ac.aggregated || ac;
-  const ctx = ac.context || {};
-  const limitTok = Number(ctx.compactionLimitTokens || ctx.limitTokens || 256000);
-  const totalTok = Number(ctx.totalTokens || 0);
-  const usedPctVal =
-    limitTok > 0 ? Math.min(100, +((totalTok / limitTok) * 100).toFixed(2)) : 0;
-
-  const runningList = Array.isArray(finalPayload?.runningConversations)
-    ? finalPayload.runningConversations
-    : [];
-
-  return {
-    updatedAtMs,
-    runningCount: runningList.length,
-    runningSubCount: runningList.reduce(
-      (acc, item) => acc + Number(item?.runningSubagentCount || 0),
-      0
-    ),
-    hasWaiting: runningList.some((item) => item?.mainActivity?.phase === 'waiting'),
-    quotas: finalPayload?.quotas || null,
-    activeConversation: {
-      cascadeId: ac.cascadeId || '',
-      isRunning: Boolean(capSource.isRunning || ac.isRunning),
-      stepCount: Number(capSource.stepCount ?? ac.stepCount ?? 0),
-      usedPct: usedPctVal,
-      latestTokPerSec: capSource.latestTokPerSec ?? ac.latestTokPerSec ?? null,
-      avgTokPerSec: capSource.avgTokPerSec ?? ac.avgTokPerSec ?? null,
-      latestTtftSec: capSource.latestTtftSec ?? ac.latestTtftSec ?? null,
-      latestStepCostUsd: capSource.latestStepCostUsd ?? ac.latestStepCostUsd ?? null,
-      sessionCostUsd: capSource.sessionCostUsd ?? ac.sessionCostUsd ?? null,
-      latestCacheHitPct: capSource.latestCacheHitPct ?? ac.latestCacheHitPct ?? null,
-      latestPromptTokens: Number(capSource.latestPromptTokens ?? ac.latestPromptTokens ?? 0),
-      totalTokens: Number(capSource.totalTokens ?? ac.totalTokens ?? 0),
-    },
-  };
 }
 
 /**

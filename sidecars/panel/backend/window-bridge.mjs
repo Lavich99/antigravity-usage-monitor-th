@@ -58,20 +58,16 @@ export function resolveDevToolsPortCandidates(
     return [
       join(appData, 'Antigravity', 'DevToolsActivePort'),
       join(localAppData, 'Antigravity', 'DevToolsActivePort'),
-      join(appData, 'Antigravity IDE', 'DevToolsActivePort'),
-      join(localAppData, 'Antigravity IDE', 'DevToolsActivePort'),
     ];
   }
   if (platform === 'darwin') {
     return [
       join(homeDir, 'Library', 'Application Support', 'Antigravity', 'DevToolsActivePort'),
-      join(homeDir, 'Library', 'Application Support', 'Antigravity IDE', 'DevToolsActivePort'),
     ];
   }
   const configHome = env?.XDG_CONFIG_HOME || join(homeDir, '.config');
   return [
     join(configHome, 'Antigravity', 'DevToolsActivePort'),
-    join(configHome, 'Antigravity IDE', 'DevToolsActivePort'),
   ];
 }
 
@@ -1234,12 +1230,7 @@ export function createWindowBridgeController(options) {
     const enabled = Boolean(curSettings.enableWindowOverlay !== false && mountMode !== 'sidebar');
     const contextWindows = curSettings.modelContextWindows || {};
     const hasContextWindows = Object.keys(contextWindows).length > 0;
-    if ((enabled || hasContextWindows) && autoConfigureIdeArgv && !ideArgvProvisioned) {
-      const prov = ensureIdeRemoteDebuggingArgv({ env, homeDir, enabled: true });
-      if (prov.updated || prov.alreadyConfigured || prov.reason === 'ide_dir_missing') {
-        ideArgvProvisioned = true;
-      }
-    }
+
     if ((enabled || hasContextWindows) && autoConfigureIdeArgv && platform === 'win32' && !desktopShortcutProvisioned) {
       desktopShortcutProvisioned = true;
       lastDesktopShortcutHealMs = Date.now();

@@ -47,15 +47,8 @@ import {
   notifyWindowOverlaySetting,
   startDefaultWindowBridge,
 } from './window-bridge.mjs';
-import { ensureCliStatusLineConfigured } from './cli-statusline-config.mjs';
 
 export const bootBundleVersion = computeRuntimeCodeVersion();
-
-let standalonePortListener = null;
-
-export function setStandalonePortListener(listener) {
-  standalonePortListener = typeof listener === 'function' ? listener : null;
-}
 
 /**
  * `sidecars/panel` 
@@ -367,19 +360,6 @@ export function executeSettingsAction(data) {
   ) {
     void notifyWindowOverlaySetting(updated.enableWindowOverlay);
   }
-  if ((updated.enableCliStatusLine !== false) !== (current.enableCliStatusLine !== false)) {
-    ensureCliStatusLineConfigured({ enabled: updated.enableCliStatusLine !== false });
-  }
-  if (
-    typeof standalonePortListener === 'function' &&
-    Number(updated.standalonePort || 0) !== Number(current.standalonePort || 0)
-  ) {
-    try {
-      standalonePortListener(Number(updated.standalonePort || 0));
-    } catch {
-      
-    }
-  }
   return {
     ok: true,
     status: 200,
@@ -451,19 +431,6 @@ export function executeResetSettingsAction() {
     void notifyWindowOverlaySetting(updated.enableWindowOverlay);
   } else if (Object.keys(current.modelContextWindows).length) {
     void notifyModelContextWindowsChanged();
-  }
-  if ((updated.enableCliStatusLine !== false) !== (current.enableCliStatusLine !== false)) {
-    ensureCliStatusLineConfigured({ enabled: updated.enableCliStatusLine !== false });
-  }
-  if (
-    typeof standalonePortListener === 'function' &&
-    Number(updated.standalonePort || 0) !== Number(current.standalonePort || 0)
-  ) {
-    try {
-      standalonePortListener(Number(updated.standalonePort || 0));
-    } catch {
-      
-    }
   }
   return {
     ok: true,
@@ -552,8 +519,6 @@ export async function dispatchBridgeApiRequest(pathname, method, data, opts = un
 export function bootWindowBridgeRuntime({ allowDynamicLs = false, onRestart = null } = {}) {
   if (lsRuntimeEndpoint.addr === 'test.invalid') return null;
   if (!allowDynamicLs && !lsRuntimeEndpoint.addr) return null;
-
-  ensureCliStatusLineConfigured({ enabled: loadSettings().enableCliStatusLine !== false });
 
   const triggerRestart =
     typeof onRestart === 'function' ? onRestart : () => scheduleSidecarRestart(150);

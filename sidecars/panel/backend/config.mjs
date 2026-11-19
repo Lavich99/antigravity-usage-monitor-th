@@ -54,7 +54,6 @@ import {
   normalizePopoverWidth,
   normalizePopoverWidthMode,
   normalizeQuotaDisplayMode,
-  normalizeStandalonePort,
   normalizeStepTableColumns,
   normalizeStepTokenComboFormat,
   normalizeThemeAccent,
@@ -104,7 +103,6 @@ export {
   normalizePopoverWidth,
   normalizePopoverWidthMode,
   normalizeQuotaDisplayMode,
-  normalizeStandalonePort,
   normalizeStepTableColumns,
   normalizeStepTokenComboFormat,
   normalizeThemeAccent,
@@ -157,9 +155,6 @@ function resolveProductDataRoots() {
   return dedupeDirCandidates([
     customRoot,
     join(geminiBase, 'antigravity'),
-    join(geminiBase, 'antigravity-cli'),
-    join(geminiBase, 'antigravity-ide'),
-    join(geminiBase, 'antigravity-idea'),
   ]);
 }
 
@@ -182,13 +177,10 @@ function resolveDefaultDataDir() {
   }
   const geminiBase = resolveGeminiBaseDir();
   const antigravityRoot = join(geminiBase, 'antigravity');
-  const cliRoot = join(geminiBase, 'antigravity-cli');
   const panelDataDir = join(antigravityRoot, 'sidecar_data', 'usage-monitor', 'panel', 'data');
   const legacyDataDir = join(antigravityRoot, 'sidecar_data', 'usage-monitor', 'data');
-  const cliPanelDataDir = join(cliRoot, 'sidecar_data', 'usage-monitor', 'panel', 'data');
   if (existsSync(panelDataDir)) return panelDataDir;
   if (existsSync(legacyDataDir)) return legacyDataDir;
-  if (existsSync(cliPanelDataDir)) return cliPanelDataDir;
   if (existsSync(antigravityRoot)) return panelDataDir;
   if (
     process.env.USAGE_MONITOR_PLUGIN_DATA &&
@@ -196,33 +188,27 @@ function resolveDefaultDataDir() {
   ) {
     return process.env.USAGE_MONITOR_PLUGIN_DATA;
   }
-  if (existsSync(cliRoot)) return cliPanelDataDir;
   return join(HERE, '.data');
 }
 
 export const DATA_DIR = resolveDefaultDataDir();
 export const SETTINGS_FILE = join(DATA_DIR, 'settings.json');
 export const CACHE_FILE = join(DATA_DIR, 'trajectory_usage_cache.json');
-export const CLI_STATUS_SNAPSHOT_FILE = join(DATA_DIR, 'cli-status-snapshot.json');
 
 /**
- * Desktop / CLI / IDE 
+ * Antigravity Desktop App directories
  */
 export const PRODUCT_DATA_ROOTS = resolveProductDataRoots();
 export const CONVERSATION_DIRS = PRODUCT_DATA_ROOTS.map((root) => join(root, 'conversations'));
 export const BRAIN_DIRS = PRODUCT_DATA_ROOTS.map((root) => join(root, 'brain'));
 export const ANNOTATION_DIRS = PRODUCT_DATA_ROOTS.map((root) => join(root, 'annotations'));
-export const DAEMON_DIRS = dedupeDirCandidates([
-  join(resolveGeminiBaseDir(), 'antigravity-cli', 'daemon'),
-  ...PRODUCT_DATA_ROOTS.map((root) => join(root, 'daemon')),
-]);
+export const DAEMON_DIRS = dedupeDirCandidates(
+  PRODUCT_DATA_ROOTS.map((root) => join(root, 'daemon'))
+);
 export const CONVERSATIONS_DIR = CONVERSATION_DIRS[0];
 export const BRAIN_DIR = BRAIN_DIRS[0];
 export const DEEP_STATS_CACHE_CANDIDATES = dedupeDirCandidates([
-  join(resolveGeminiBaseDir(), 'antigravity-ide', 'brain', '.deep_stats_cache.json'),
-  join(resolveGeminiBaseDir(), 'antigravity-cli', 'brain', '.deep_stats_cache.json'),
   join(resolveGeminiBaseDir(), 'antigravity', 'brain', '.deep_stats_cache.json'),
-  join(resolveGeminiBaseDir(), 'antigravity-idea', 'brain', '.deep_stats_cache.json'),
   ...BRAIN_DIRS.map((dir) => join(dir, '.deep_stats_cache.json')),
 ]);
 

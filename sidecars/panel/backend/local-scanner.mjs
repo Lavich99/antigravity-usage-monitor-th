@@ -398,16 +398,8 @@ function findTranscriptPath(cascadeId) {
   return bestPath;
 }
 
-function inferConversationAppSource(diskFiles = [], extMatch = null) {
-  if (extMatch?.appSource && extMatch.appSource !== 'standalone') {
-    return extMatch.appSource;
-  }
-  for (const filePath of Array.isArray(diskFiles) ? diskFiles : []) {
-    const s = String(filePath || '');
-    if (/[\\/]antigravity-cli(?:[\\/]|$)/i.test(s)) return 'cli';
-    if (/[\\/]antigravity-ide(?:[\\/]|$)/i.test(s)) return 'ide';
-  }
-  return '';
+function inferConversationAppSource(_diskFiles = [], _extMatch = null) {
+  return 'standalone';
 }
 
 function extractOfflineUserTitle(rawContent) {

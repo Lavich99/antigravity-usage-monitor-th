@@ -537,8 +537,6 @@ export function aggregateMultiWindowUsage({
 
   const SOURCE_LABELS = {
     standalone: 'Antigravity App',
-    ide: 'Antigravity IDE',
-    cli: 'Antigravity CLI',
   };
   const perSourceStats = new Map();
   const externalConvos = loadExternalDeepStatsCache();
@@ -603,9 +601,10 @@ export function aggregateMultiWindowUsage({
     if (liveEntry && (liveEntry.steps?.length || 0) >= (ext.steps?.length || 0)) {
       continue;
     }
+    if (ext.appSource && ext.appSource !== 'standalone') continue;
     allEntriesToAggregate.push({
       cascadeId: extCidLower,
-      appSource: ext.appSource || 'ide',
+      appSource: 'standalone',
       steps: ext.steps || [],
       isCurrentConv: familySet.has(extCidLower),
     });

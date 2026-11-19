@@ -1014,7 +1014,7 @@ function findSecondarySplitDockTargets(primaryDock, mountMode, portalNode = null
   const out = [];
 
   // 1. If Antigravity Split View renders multiple @container/titlebar headers (one per split pane)
-  if (mountMode !== 'composer' && primaryDock.kind !== 'ide-titlebar') {
+  if (mountMode !== 'composer') {
     const titlebars = document.querySelectorAll('[class*="@container/titlebar"]');
     for (const tb of titlebars) {
       if (!tb || usedTitlebars.has(tb) || isAnyOverlayHostNode(tb)) continue;
@@ -1106,8 +1106,6 @@ function resolveActiveDockTarget(options = undefined) {
       };
     }
   }
-  const ideTarget = findIdeWorkbenchTitlebar();
-  if (ideTarget) return ideTarget;
   const titlebar = findHostTitlebar();
   return buildFlowTitlebarDescriptor(titlebar);
 }
@@ -2167,7 +2165,7 @@ export function mountWindowOverlay() {
 
   function updateFixedFallbackPosition() {
     const dockMode = capsuleHost.getAttribute('data-dock');
-    if (dockMode === 'flow' || dockMode === 'ide-titlebar' || dockMode === 'composer') {
+    if (dockMode === 'flow' || dockMode === 'composer') {
       capsuleHost.style.top = '';
       capsuleHost.style.right = '';
       return;
@@ -2755,26 +2753,6 @@ export function mountWindowOverlay() {
         dockTarget.needsAutoMarginTransfer ? '1' : null
       );
       syncSurfaceComposerPermLayout(surface, dockTarget.permLayout, wantPermLeft);
-    } else if (kind === 'ide-titlebar') {
-      clearSurfaceComposerPermLayout(surface);
-      patchAttr(hostEl, 'data-composer-perm-left', null);
-      if (surface.patchedActionToolbar !== actionToolbar) {
-        restoreSurfaceActionToolbar(surface);
-        if (actionToolbar?.style) {
-          surface.patchedActionToolbar = actionToolbar;
-          surface.patchedActionToolbarPrevMargin = actionToolbar.style.marginLeft || '';
-          actionToolbar.style.marginLeft = '0px';
-        }
-      }
-      if (hostEl.parentElement !== targetContainer || targetContainer.firstChild !== hostEl) {
-        if (targetContainer.firstChild) {
-          targetContainer.insertBefore(hostEl, targetContainer.firstChild);
-        } else {
-          targetContainer.appendChild(hostEl);
-        }
-      }
-      patchAttr(hostEl, 'data-dock', 'ide-titlebar');
-      patchAttr(hostEl, 'data-composer-push', null);
     } else {
       clearSurfaceComposerPermLayout(surface);
       patchAttr(hostEl, 'data-composer-perm-left', null);
