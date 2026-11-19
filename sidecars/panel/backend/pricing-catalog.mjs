@@ -251,8 +251,9 @@ export function rebuildActiveCatalog() {
   cloudSyncState.updatedAt = updatedAt;
   cloudSyncState.fetchedAtMs = cloudSyncState.fetchedAtMs || 0;
   cloudSyncState.sourceUrl = '';
-  cloudSyncState.latestPluginVersion = installedVersion;
-  cloudSyncState.releaseUrl = '';
+  if (!cloudSyncState.latestPluginVersion) {
+    cloudSyncState.latestPluginVersion = installedVersion;
+  }
   cloudSyncState.downloadUrl = '';
   cloudSyncState.archiveFallbackUrl = '';
 }
@@ -265,12 +266,16 @@ rebuildActiveCatalog();
  */
 export function getCloudStatus() {
   const currentPluginVersion = readInstalledPluginVersion();
+  const latestPluginVersion = isValidSemver(cloudSyncState.latestPluginVersion)
+    ? String(cloudSyncState.latestPluginVersion).trim().replace(/^v/i, '')
+    : currentPluginVersion;
+  const updateAvailable = compareSemver(latestPluginVersion, currentPluginVersion) > 0;
   return {
     currentPluginVersion,
-    latestPluginVersion: currentPluginVersion,
-    updateAvailable: false,
-    installMode: 'local',
-    releaseUrl: '',
+    latestPluginVersion,
+    updateAvailable,
+    installMode: 'readonly',
+    releaseUrl: typeof cloudSyncState.releaseUrl === 'string' ? cloudSyncState.releaseUrl : '',
     downloadUrl: '',
     catalogVersion: cloudSyncState.catalogVersion || 'builtin',
     catalogUpdatedAt: cloudSyncState.updatedAt || null,
@@ -278,8 +283,8 @@ export function getCloudStatus() {
     source: cloudSyncState.source || 'local',
     modelCount: Object.keys(MODEL_PRICING).length,
     placeholderCount: Object.keys(PLACEHOLDER_MAP).length,
-    isSyncing: false,
-    lastSyncError: null,
+    isSyncing: Boolean(cloudSyncState.isSyncing),
+    lastSyncError: cloudSyncState.lastError || null,
     isUpdating: false,
     lastUpdateResult: pluginUpdateState.lastResult || null,
     lastUpdateError: null,

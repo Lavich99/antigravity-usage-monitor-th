@@ -657,37 +657,37 @@ const I18N_MESSAGES_EN_US = Object.freeze({
   'settings.gen.fontXl': 'XL',
   'settings.gen.fontHint': 'Scales sidebar and popover typography while keeping the inline capsule compact',
   'settings.gen.updateTitle': 'Updates & Pricing',
-  'settings.gen.updateMode': 'Update Policy',
-  'settings.gen.updateManual': 'Notify only, update manually',
-  'settings.gen.updateAuto': 'Auto update',
-  'settings.gen.updateOff': 'Disable updates',
+  'settings.gen.updateMode': 'Update Notifier',
+  'settings.gen.updateManual': 'Notify new releases (Read-Only)',
+  'settings.gen.updateAuto': 'Notify new releases (Read-Only)',
+  'settings.gen.updateOff': 'Off (100% Offline)',
   'settings.gen.pricingLabel': 'Pricing Catalog',
   'settings.gen.versionLabel': 'Current Version',
   'settings.gen.modelCount': '{count} models',
-  'settings.gen.srcRemote': 'Cloud synced',
+  'settings.gen.srcRemote': 'Local file',
   'settings.gen.srcLocal': 'Local file',
   'settings.gen.srcDefault': 'Built-in',
-  'settings.gen.syncAt': 'Synced {time}',
+  'settings.gen.syncAt': 'Loaded {time}',
   'settings.gen.pubAt': 'Published {date}',
-  'settings.gen.defaultPricing': 'Default catalog',
-  'settings.gen.syncBtn': 'Sync Pricing',
-  'settings.gen.syncingBtn': 'Syncing…',
-  'settings.gen.syncingMsg': 'Syncing pricing catalog…',
-  'settings.gen.syncedMsg': 'Pricing updated ({count} models)',
-  'settings.gen.syncFallbackMsg': 'Timed out, using local catalog',
-  'settings.gen.checkUpdateBtn': 'Check Updates',
+  'settings.gen.defaultPricing': 'Local catalog',
+  'settings.gen.syncBtn': 'Reload Local Pricing',
+  'settings.gen.syncingBtn': 'Loading…',
+  'settings.gen.syncingMsg': 'Reloading local pricing catalog…',
+  'settings.gen.syncedMsg': 'Pricing reloaded ({count} models)',
+  'settings.gen.syncFallbackMsg': 'Using local catalog',
+  'settings.gen.checkUpdateBtn': 'Check Releases',
   'settings.gen.checkingBtn': 'Checking…',
-  'settings.gen.checkingMsg': 'Checking for updates…',
+  'settings.gen.checkingMsg': 'Checking GitHub Releases (Read-Only)…',
   'settings.gen.checkFailedMsg': 'Check failed: {err}',
   'settings.gen.upToDateMsg': 'Already up to date (v{ver})',
-  'settings.gen.downloadingMsg': 'Downloading update…',
-  'settings.gen.updatedRestartMsg': 'Update complete, restarting panel…',
-  'settings.gen.updateSkippedMsg': 'Update not applied',
-  'settings.gen.updateFailedMsg': 'Update failed',
+  'settings.gen.downloadingMsg': 'Opening GitHub Releases…',
+  'settings.gen.updatedRestartMsg': 'Pricing catalog reloaded',
+  'settings.gen.updateSkippedMsg': 'Opened GitHub Releases — download manually (Read-Only mode)',
+  'settings.gen.updateFailedMsg': 'Update check failed',
   'settings.gen.canUpgradeSub': 'v{ver} available ({mode})',
-  'settings.gen.upgradeToBtn': 'Upgrade to v{ver}',
-  'settings.gen.manualUpgradeBtn': 'Upgrade v{ver}',
-  'settings.gen.updateOffSub': 'Notifications off ({mode})',
+  'settings.gen.upgradeToBtn': 'View v{ver}',
+  'settings.gen.manualUpgradeBtn': 'View v{ver}',
+  'settings.gen.updateOffSub': 'Offline mode ({mode})',
   'settings.gen.latestSub': 'Up to date ({mode})',
 
   // Preferences -> Structure Tab
@@ -1204,11 +1204,11 @@ const I18N_MESSAGES_TH_TH = Object.freeze({
   'settings.gen.fontLg': 'ใหญ่',
   'settings.gen.fontXl': 'ใหญ่มาก',
   'settings.gen.fontHint': 'ปรับขนาดตัวอักษรในแผงด้านข้างและ Popup (แถบ Capsule ด้านบนจะคงขนาดกะทัดรัด)',
-  'settings.gen.updateTitle': 'เวอร์ชันและตารางราคา (โหมดออฟไลน์)',
-  'settings.gen.updateMode': 'การอัปเดต',
-  'settings.gen.updateManual': 'ปิดการต่อเน็ต (ออฟไลน์)',
-  'settings.gen.updateAuto': 'ปิดการต่อเน็ต (ออฟไลน์)',
-  'settings.gen.updateOff': 'ปิดอัปเดตออนไลน์ถาวร',
+  'settings.gen.updateTitle': 'เวอร์ชันและตารางราคา',
+  'settings.gen.updateMode': 'แจ้งเตือนอัปเดต',
+  'settings.gen.updateManual': 'แจ้งเตือนเวอร์ชันใหม่ (Read-Only)',
+  'settings.gen.updateAuto': 'แจ้งเตือนเวอร์ชันใหม่ (Read-Only)',
+  'settings.gen.updateOff': 'ปิดการเช็กอัปเดต (ออฟไลน์ล้วน)',
   'settings.gen.pricingLabel': 'ตารางราคาโมเดล',
   'settings.gen.versionLabel': 'เวอร์ชันปัจจุบัน',
   'settings.gen.modelCount': '{count} โมเดล',
@@ -1223,20 +1223,20 @@ const I18N_MESSAGES_TH_TH = Object.freeze({
   'settings.gen.syncingMsg': 'กำลังอ่านตารางราคาในเครื่อง…',
   'settings.gen.syncedMsg': 'โหลดตารางราคาแล้ว ({count} โมเดล)',
   'settings.gen.syncFallbackMsg': 'ใช้ตารางราคาในเครื่อง',
-  'settings.gen.checkUpdateBtn': 'โหมดออฟไลน์ (ไม่ต่อเน็ต)',
-  'settings.gen.checkingBtn': 'โหมดออฟไลน์',
-  'settings.gen.checkingMsg': 'ปลั๊กอินทำงานแบบออฟไลน์ล้วน ไม่มีการเช็กอัปเดตผ่านเน็ต',
-  'settings.gen.checkFailedMsg': 'โหมดออฟไลน์: ปิดการต่อเน็ต',
-  'settings.gen.upToDateMsg': 'เวอร์ชันในเครื่อง v{ver} (ออฟไลน์)',
-  'settings.gen.downloadingMsg': 'ปิดใช้งาน',
+  'settings.gen.checkUpdateBtn': 'เช็กเวอร์ชันใหม่',
+  'settings.gen.checkingBtn': 'กำลังเช็ก…',
+  'settings.gen.checkingMsg': 'กำลังตรวจเวอร์ชันล่าสุดจาก GitHub Releases (Read-Only)…',
+  'settings.gen.checkFailedMsg': 'เช็กอัปเดตไม่สำเร็จ: {err}',
+  'settings.gen.upToDateMsg': 'เป็นเวอร์ชันล่าสุดแล้ว (v{ver})',
+  'settings.gen.downloadingMsg': 'เปิดหน้า GitHub Releases…',
   'settings.gen.updatedRestartMsg': 'โหลดตารางราคาใหม่แล้ว',
-  'settings.gen.updateSkippedMsg': 'โหมดออฟไลน์: ปิดการอัปเดตผ่านเน็ต',
-  'settings.gen.updateFailedMsg': 'ปิดการอัปเดตผ่านเน็ต',
-  'settings.gen.canUpgradeSub': 'โหมดออฟไลน์ ({mode})',
-  'settings.gen.upgradeToBtn': 'v{ver}',
-  'settings.gen.manualUpgradeBtn': 'v{ver}',
-  'settings.gen.updateOffSub': 'ออฟไลน์ล้วน ({mode})',
-  'settings.gen.latestSub': 'ออฟไลน์ล้วน ({mode})',
+  'settings.gen.updateSkippedMsg': 'เปิดหน้า GitHub Releases แล้ว — ดาวน์โหลดและอัปเดตด้วยตนเองเพื่อความปลอดภัย',
+  'settings.gen.updateFailedMsg': 'ไม่สามารถเช็กอัปเดตได้',
+  'settings.gen.canUpgradeSub': 'มีเวอร์ชันใหม่ v{ver} ({mode})',
+  'settings.gen.upgradeToBtn': 'ดูรีลีส v{ver}',
+  'settings.gen.manualUpgradeBtn': 'ดูรีลีส v{ver}',
+  'settings.gen.updateOffSub': 'ปิดการแจ้งเตือน ({mode})',
+  'settings.gen.latestSub': 'เป็นเวอร์ชันล่าสุด ({mode})',
 
   // Preferences -> Structure Tab
   'settings.str.thirdTabAria': 'แท็บย่อยการจัดวางหน้าจอ',
@@ -3056,8 +3056,9 @@ function normalizeClientStepColumns(raw) {
  */
 function normalizeClientUpdateMode(mode, legacyAutoUpdate) {
   const m = String(mode ?? '').trim().toLowerCase();
-  if (m === 'off' || m === 'manual' || m === 'auto') return m;
-  if (legacyAutoUpdate === true) return 'auto';
+  if (m === 'manual' || m === 'notify' || m === 'auto') return 'manual';
+  if (m === 'off') return 'off';
+  if (legacyAutoUpdate === true) return 'manual';
   return 'off';
 }
 
@@ -3993,8 +3994,9 @@ async function rebuildTrajectoryCache() {
   return res;
 }
 
-async function triggerCloudSync() {
-  const res = await callSidecarApi('/api/cloud-sync', { method: 'POST', body: {} });
+async function triggerCloudSync(opts = {}) {
+  const body = { checkRelease: opts?.checkRelease === true };
+  const res = await callSidecarApi('/api/cloud-sync', { method: 'POST', body });
   await fetchTelemetry({ force: true });
   return res;
 }
@@ -13527,9 +13529,8 @@ function getFontScaleOptions() {
 
 function getUpdateModeOptions() {
   return [
-    { value: 'manual', label: t('settings.gen.updateManual') },
-    { value: 'auto', label: t('settings.gen.updateAuto') },
     { value: 'off', label: t('settings.gen.updateOff') },
+    { value: 'manual', label: t('settings.gen.updateManual') },
   ];
 }
 
@@ -13723,7 +13724,7 @@ const SettingsGeneralTab = defineComponent({
 
     const pricingCountVal = h('strong', { className: 'cell-value', text: '—' });
     const pricingSyncSub = h('span', { className: 'cell-sub', text: t('quota.loading') });
-    const versionVal = h('strong', { className: 'cell-value', text: 'v1.4.4' });
+    const versionVal = h('strong', { className: 'cell-value', text: 'v1.5.0-th.1' });
     const versionSub = h('span', { className: 'cell-sub', text: t('settings.gen.checkingBtn') });
 
     const syncPricingBtnText = h('span', { text: t('settings.gen.syncBtn') });
@@ -13737,7 +13738,7 @@ const SettingsGeneralTab = defineComponent({
           patchText(syncPricingBtnText, t('settings.gen.syncingBtn'));
           showCloudFeedback(t('settings.gen.syncingMsg'), 0);
           try {
-            const res = await triggerCloudSync();
+            const res = await triggerCloudSync({ checkRelease: false });
             const cs = res?.cloudStatus;
             if (res?.ok && cs) {
               showCloudFeedback(t('settings.gen.syncedMsg', { count: cs.modelCount }), 3500);
@@ -13764,39 +13765,43 @@ const SettingsGeneralTab = defineComponent({
         onClick: async () => {
           patchAttr(updatePluginBtn, 'disabled', true);
           try {
-            if (!latestCloudStatus?.updateAvailable) {
-              patchText(updatePluginBtnText, t('settings.gen.checkingBtn'));
-              showCloudFeedback(t('settings.gen.checkingMsg'), 0);
-              const syncRes = await triggerCloudSync();
-              const cs = syncRes?.cloudStatus || latestCloudStatus;
-              if (cs) {
-                latestCloudStatus = cs;
-                renderCloudStatus(cs);
+            if (latestCloudStatus?.updateAvailable) {
+              const targetUrl =
+                latestCloudStatus.releaseUrl ||
+                'https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest';
+              if (typeof window !== 'undefined' && typeof window.open === 'function') {
+                window.open(targetUrl, '_blank', 'noopener,noreferrer');
               }
-              if (!syncRes?.ok && cs?.lastSyncError) {
-                showCloudFeedback(
-                  t('settings.gen.checkFailedMsg', { err: cs.lastSyncError }),
-                  5000
-                );
-                return;
-              }
-              if (!cs?.updateAvailable) {
-                const curVer = cs?.currentPluginVersion || '1.4.4';
-                showCloudFeedback(t('settings.gen.upToDateMsg', { ver: curVer }), 4500);
-                return;
-              }
+              showCloudFeedback(t('settings.gen.updateSkippedMsg'), 5000);
+              return;
             }
-            patchText(updatePluginBtnText, t('capsule.updating'));
-            showCloudFeedback(t('settings.gen.downloadingMsg'), 0);
-            const res = await triggerPluginUpdate();
-            if (res?.cloudStatus) {
-              latestCloudStatus = res.cloudStatus;
+            patchText(updatePluginBtnText, t('settings.gen.checkingBtn'));
+            showCloudFeedback(t('settings.gen.checkingMsg'), 0);
+            const syncRes = await triggerCloudSync({ checkRelease: true });
+            const cs = syncRes?.cloudStatus || latestCloudStatus;
+            if (cs) {
+              latestCloudStatus = cs;
+              renderCloudStatus(cs);
             }
-            if (res?.ok) {
-              showCloudFeedback(res.message || t('settings.gen.updatedRestartMsg'), 5000);
-            } else {
-              showCloudFeedback(res?.message || t('settings.gen.updateSkippedMsg'), 5500);
+            if (!syncRes?.ok && cs?.lastSyncError) {
+              showCloudFeedback(
+                t('settings.gen.checkFailedMsg', { err: cs.lastSyncError }),
+                5000
+              );
+              return;
             }
+            if (cs?.updateAvailable) {
+              showCloudFeedback(
+                t('settings.gen.canUpgradeSub', {
+                  ver: cs.latestPluginVersion,
+                  mode: 'GitHub',
+                }),
+                5500
+              );
+              return;
+            }
+            const curVer = cs?.currentPluginVersion || '1.5.0-th.1';
+            showCloudFeedback(t('settings.gen.upToDateMsg', { ver: curVer }), 4500);
           } catch (err) {
             showCloudFeedback(err?.message || t('settings.gen.updateFailedMsg'), 5000);
           } finally {
@@ -13871,9 +13876,9 @@ const SettingsGeneralTab = defineComponent({
         `${srcLabel} · ${formatCloudSyncTimeText(cs.lastSyncedAtMs, cs.catalogUpdatedAt)}`
       );
 
-      const curVer = cs.currentPluginVersion || '1.4.4';
+      const curVer = cs.currentPluginVersion || '1.5.0-th.1';
       const latVer = cs.latestPluginVersion || curVer;
-      const modeTag = cs.installMode === 'git' ? 'Git' : 'ZIP';
+      const modeTag = cs.installMode === 'git' ? 'Git' : 'Read-Only';
       patchText(versionVal, `v${curVer}`);
       if (cs.updateAvailable && draftPluginUpdateMode !== 'off') {
         patchText(versionSub, t('settings.gen.canUpgradeSub', { ver: latVer, mode: modeTag }));
@@ -15967,28 +15972,15 @@ const TopSessionHeader = defineComponent({
         className: 'update-badge-btn',
         hidden: true,
         'aria-label': t('header.ariaUpdate'),
-        onClick: async () => {
-          if (isHeaderUpdating) return;
-          isHeaderUpdating = true;
-          patchText(updateBtnText, t('header.upgrading'));
-          patchAttr(updateBtn, 'disabled', true);
-          try {
-            const res = await triggerPluginUpdate();
-            if (!res?.ok) {
-              uiStore.setState({ activeView: 'settings' });
-            }
-          } catch {
+        onClick: () => {
+          const cs = telemetryStore.getState().telemetry?.cloudStatus;
+          const targetUrl =
+            cs?.releaseUrl ||
+            'https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest';
+          if (typeof window !== 'undefined' && typeof window.open === 'function') {
+            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+          } else {
             uiStore.setState({ activeView: 'settings' });
-          } finally {
-            isHeaderUpdating = false;
-            patchAttr(updateBtn, 'disabled', false);
-            const cs = telemetryStore.getState().telemetry?.cloudStatus;
-            patchText(
-              updateBtnText,
-              cs?.latestPluginVersion
-                ? t('header.upgradeToVer', { ver: cs.latestPluginVersion })
-                : t('header.hasUpdate')
-            );
           }
         },
       },
@@ -20075,30 +20067,15 @@ function mountWindowOverlay() {
           e.stopPropagation();
           setActiveCapsuleAnchor(surface);
           if (isTopbarUpdating) return;
-          isTopbarUpdating = true;
-          patchClasses(uBtn, { 'is-updating': true });
-          patchSvgIcon(uIcon, 'refresh');
-          patchText(uLabel, t('capsule.updating'));
-          patchAttr(uBtn, 'disabled', true);
-          try {
-            const res = await triggerPluginUpdate();
-            if (!res?.ok) {
-              uiStore.setState({ activeView: 'settings' });
-              setPopoverOpen(true);
-            }
-          } catch {
+          const cs = telemetryStore.getState().telemetry?.cloudStatus;
+          const targetUrl =
+            cs?.releaseUrl ||
+            'https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest';
+          if (typeof window !== 'undefined' && typeof window.open === 'function') {
+            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+          } else {
             uiStore.setState({ activeView: 'settings' });
             setPopoverOpen(true);
-          } finally {
-            isTopbarUpdating = false;
-            patchClasses(uBtn, { 'is-updating': false });
-            patchSvgIcon(uIcon, 'arrow-down');
-            patchAttr(uBtn, 'disabled', false);
-            const cs = telemetryStore.getState().telemetry?.cloudStatus;
-            patchText(
-              uLabel,
-              cs?.latestPluginVersion ? `v${cs.latestPluginVersion}` : t('capsule.newVersion')
-            );
           }
         },
         onMouseenter: (e) => {

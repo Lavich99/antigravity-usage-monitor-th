@@ -35,9 +35,12 @@ import {
 import { ensureLsEndpointDiscovered } from './ls-discovery.mjs';
 import { callLsRpc, getContextModelCatalog } from './ls-rpc.mjs';
 import {
+  checkReleaseUpdateReadOnly,
+  clearReleaseUpdateState,
   performPluginUpdate,
   scheduleSidecarRestart,
   setSidecarRestartHandler,
+  startBackgroundUpdateNotifier,
   syncCloudCatalog,
 } from './plugin-updater.mjs';
 import { getCloudStatus } from './pricing-catalog.mjs';
@@ -360,6 +363,17 @@ export function executeSettingsAction(data) {
   ) {
     void notifyWindowOverlaySetting(updated.enableWindowOverlay);
   }
+  const prevUpdateMode = normalizePluginUpdateMode(
+    current.pluginUpdateMode,
+    current.autoUpdatePlugin
+  );
+  if (updated.pluginUpdateMode !== prevUpdateMode) {
+    if (updated.pluginUpdateMode === 'off') {
+      clearReleaseUpdateState();
+    } else if (lsRuntimeEndpoint.addr !== 'test.invalid') {
+      void checkReleaseUpdateReadOnly({ force: false });
+    }
+  }
   return {
     ok: true,
     status: 200,
@@ -462,8 +476,12 @@ export function executeRebuildCacheAction() {
   };
 }
 
-export async function executeCloudSyncAction() {
-  const cloudStatus = await syncCloudCatalog({ force: true });
+export async function executeCloudSyncAction(data = undefined) {
+  const payload = isPlainObject(data) ? data : {};
+  const cloudStatus = await syncCloudCatalog({
+    force: true,
+    checkRelease: payload.checkRelease === true,
+  });
   return {
     status: 200,
     contentType: 'application/json',
@@ -499,7 +517,7 @@ export async function dispatchBridgeApiRequest(pathname, method, data, opts = un
     return executeRebuildCacheAction();
   }
   if (pathname === '/api/cloud-sync' && method === 'POST') {
-    return executeCloudSyncAction();
+    return executeCloudSyncAction(data);
   }
   if (pathname === '/api/plugin-update' && method === 'POST') {
     return executePluginUpdateAction();
@@ -529,6 +547,8 @@ export function bootWindowBridgeRuntime({ allowDynamicLs = false, onRestart = nu
   if (!lsRuntimeEndpoint.baseUrl) {
     ensureLsEndpointDiscovered({ force: false }).catch(() => {});
   }
+
+  startBackgroundUpdateNotifier();
 
   return startDefaultWindowBridge({
     handleApiRequest: (pathname, method, data) =>

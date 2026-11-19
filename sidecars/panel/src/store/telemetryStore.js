@@ -405,8 +405,9 @@ export function normalizeClientStepColumns(raw) {
  */
 export function normalizeClientUpdateMode(mode, legacyAutoUpdate) {
   const m = String(mode ?? '').trim().toLowerCase();
-  if (m === 'off' || m === 'manual' || m === 'auto') return m;
-  if (legacyAutoUpdate === true) return 'auto';
+  if (m === 'manual' || m === 'notify' || m === 'auto') return 'manual';
+  if (m === 'off') return 'off';
+  if (legacyAutoUpdate === true) return 'manual';
   return 'off';
 }
 
@@ -1342,8 +1343,9 @@ export async function rebuildTrajectoryCache() {
   return res;
 }
 
-export async function triggerCloudSync() {
-  const res = await callSidecarApi('/api/cloud-sync', { method: 'POST', body: {} });
+export async function triggerCloudSync(opts = {}) {
+  const body = { checkRelease: opts?.checkRelease === true };
+  const res = await callSidecarApi('/api/cloud-sync', { method: 'POST', body });
   await fetchTelemetry({ force: true });
   return res;
 }

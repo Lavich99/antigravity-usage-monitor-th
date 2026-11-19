@@ -41,9 +41,8 @@ function getFontScaleOptions() {
 
 function getUpdateModeOptions() {
   return [
-    { value: 'manual', label: t('settings.gen.updateManual') },
-    { value: 'auto', label: t('settings.gen.updateAuto') },
     { value: 'off', label: t('settings.gen.updateOff') },
+    { value: 'manual', label: t('settings.gen.updateManual') },
   ];
 }
 
@@ -237,7 +236,7 @@ export const SettingsGeneralTab = defineComponent({
 
     const pricingCountVal = h('strong', { className: 'cell-value', text: '—' });
     const pricingSyncSub = h('span', { className: 'cell-sub', text: t('quota.loading') });
-    const versionVal = h('strong', { className: 'cell-value', text: 'v1.4.4' });
+    const versionVal = h('strong', { className: 'cell-value', text: 'v1.5.0-th.1' });
     const versionSub = h('span', { className: 'cell-sub', text: t('settings.gen.checkingBtn') });
 
     const syncPricingBtnText = h('span', { text: t('settings.gen.syncBtn') });
@@ -251,7 +250,7 @@ export const SettingsGeneralTab = defineComponent({
           patchText(syncPricingBtnText, t('settings.gen.syncingBtn'));
           showCloudFeedback(t('settings.gen.syncingMsg'), 0);
           try {
-            const res = await triggerCloudSync();
+            const res = await triggerCloudSync({ checkRelease: false });
             const cs = res?.cloudStatus;
             if (res?.ok && cs) {
               showCloudFeedback(t('settings.gen.syncedMsg', { count: cs.modelCount }), 3500);
@@ -278,39 +277,43 @@ export const SettingsGeneralTab = defineComponent({
         onClick: async () => {
           patchAttr(updatePluginBtn, 'disabled', true);
           try {
-            if (!latestCloudStatus?.updateAvailable) {
-              patchText(updatePluginBtnText, t('settings.gen.checkingBtn'));
-              showCloudFeedback(t('settings.gen.checkingMsg'), 0);
-              const syncRes = await triggerCloudSync();
-              const cs = syncRes?.cloudStatus || latestCloudStatus;
-              if (cs) {
-                latestCloudStatus = cs;
-                renderCloudStatus(cs);
+            if (latestCloudStatus?.updateAvailable) {
+              const targetUrl =
+                latestCloudStatus.releaseUrl ||
+                'https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest';
+              if (typeof window !== 'undefined' && typeof window.open === 'function') {
+                window.open(targetUrl, '_blank', 'noopener,noreferrer');
               }
-              if (!syncRes?.ok && cs?.lastSyncError) {
-                showCloudFeedback(
-                  t('settings.gen.checkFailedMsg', { err: cs.lastSyncError }),
-                  5000
-                );
-                return;
-              }
-              if (!cs?.updateAvailable) {
-                const curVer = cs?.currentPluginVersion || '1.4.4';
-                showCloudFeedback(t('settings.gen.upToDateMsg', { ver: curVer }), 4500);
-                return;
-              }
+              showCloudFeedback(t('settings.gen.updateSkippedMsg'), 5000);
+              return;
             }
-            patchText(updatePluginBtnText, t('capsule.updating'));
-            showCloudFeedback(t('settings.gen.downloadingMsg'), 0);
-            const res = await triggerPluginUpdate();
-            if (res?.cloudStatus) {
-              latestCloudStatus = res.cloudStatus;
+            patchText(updatePluginBtnText, t('settings.gen.checkingBtn'));
+            showCloudFeedback(t('settings.gen.checkingMsg'), 0);
+            const syncRes = await triggerCloudSync({ checkRelease: true });
+            const cs = syncRes?.cloudStatus || latestCloudStatus;
+            if (cs) {
+              latestCloudStatus = cs;
+              renderCloudStatus(cs);
             }
-            if (res?.ok) {
-              showCloudFeedback(res.message || t('settings.gen.updatedRestartMsg'), 5000);
-            } else {
-              showCloudFeedback(res?.message || t('settings.gen.updateSkippedMsg'), 5500);
+            if (!syncRes?.ok && cs?.lastSyncError) {
+              showCloudFeedback(
+                t('settings.gen.checkFailedMsg', { err: cs.lastSyncError }),
+                5000
+              );
+              return;
             }
+            if (cs?.updateAvailable) {
+              showCloudFeedback(
+                t('settings.gen.canUpgradeSub', {
+                  ver: cs.latestPluginVersion,
+                  mode: 'GitHub',
+                }),
+                5500
+              );
+              return;
+            }
+            const curVer = cs?.currentPluginVersion || '1.5.0-th.1';
+            showCloudFeedback(t('settings.gen.upToDateMsg', { ver: curVer }), 4500);
           } catch (err) {
             showCloudFeedback(err?.message || t('settings.gen.updateFailedMsg'), 5000);
           } finally {
@@ -385,9 +388,9 @@ export const SettingsGeneralTab = defineComponent({
         `${srcLabel} · ${formatCloudSyncTimeText(cs.lastSyncedAtMs, cs.catalogUpdatedAt)}`
       );
 
-      const curVer = cs.currentPluginVersion || '1.4.4';
+      const curVer = cs.currentPluginVersion || '1.5.0-th.1';
       const latVer = cs.latestPluginVersion || curVer;
-      const modeTag = cs.installMode === 'git' ? 'Git' : 'ZIP';
+      const modeTag = cs.installMode === 'git' ? 'Git' : 'Read-Only';
       patchText(versionVal, `v${curVer}`);
       if (cs.updateAvailable && draftPluginUpdateMode !== 'off') {
         patchText(versionSub, t('settings.gen.canUpgradeSub', { ver: latVer, mode: modeTag }));

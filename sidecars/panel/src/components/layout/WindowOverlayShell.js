@@ -1522,30 +1522,15 @@ export function mountWindowOverlay() {
           e.stopPropagation();
           setActiveCapsuleAnchor(surface);
           if (isTopbarUpdating) return;
-          isTopbarUpdating = true;
-          patchClasses(uBtn, { 'is-updating': true });
-          patchSvgIcon(uIcon, 'refresh');
-          patchText(uLabel, t('capsule.updating'));
-          patchAttr(uBtn, 'disabled', true);
-          try {
-            const res = await triggerPluginUpdate();
-            if (!res?.ok) {
-              uiStore.setState({ activeView: 'settings' });
-              setPopoverOpen(true);
-            }
-          } catch {
+          const cs = telemetryStore.getState().telemetry?.cloudStatus;
+          const targetUrl =
+            cs?.releaseUrl ||
+            'https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest';
+          if (typeof window !== 'undefined' && typeof window.open === 'function') {
+            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+          } else {
             uiStore.setState({ activeView: 'settings' });
             setPopoverOpen(true);
-          } finally {
-            isTopbarUpdating = false;
-            patchClasses(uBtn, { 'is-updating': false });
-            patchSvgIcon(uIcon, 'arrow-down');
-            patchAttr(uBtn, 'disabled', false);
-            const cs = telemetryStore.getState().telemetry?.cloudStatus;
-            patchText(
-              uLabel,
-              cs?.latestPluginVersion ? `v${cs.latestPluginVersion}` : t('capsule.newVersion')
-            );
           }
         },
         onMouseenter: (e) => {

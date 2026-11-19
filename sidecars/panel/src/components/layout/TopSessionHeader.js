@@ -54,28 +54,15 @@ export const TopSessionHeader = defineComponent({
         className: 'update-badge-btn',
         hidden: true,
         'aria-label': t('header.ariaUpdate'),
-        onClick: async () => {
-          if (isHeaderUpdating) return;
-          isHeaderUpdating = true;
-          patchText(updateBtnText, t('header.upgrading'));
-          patchAttr(updateBtn, 'disabled', true);
-          try {
-            const res = await triggerPluginUpdate();
-            if (!res?.ok) {
-              uiStore.setState({ activeView: 'settings' });
-            }
-          } catch {
+        onClick: () => {
+          const cs = telemetryStore.getState().telemetry?.cloudStatus;
+          const targetUrl =
+            cs?.releaseUrl ||
+            'https://github.com/Lavich99/antigravity-usage-monitor-th/releases/latest';
+          if (typeof window !== 'undefined' && typeof window.open === 'function') {
+            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+          } else {
             uiStore.setState({ activeView: 'settings' });
-          } finally {
-            isHeaderUpdating = false;
-            patchAttr(updateBtn, 'disabled', false);
-            const cs = telemetryStore.getState().telemetry?.cloudStatus;
-            patchText(
-              updateBtnText,
-              cs?.latestPluginVersion
-                ? t('header.upgradeToVer', { ver: cs.latestPluginVersion })
-                : t('header.hasUpdate')
-            );
           }
         },
       },

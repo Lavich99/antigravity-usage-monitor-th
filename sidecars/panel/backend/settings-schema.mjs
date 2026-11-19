@@ -306,7 +306,11 @@ export function normalizeStepTokenComboFormat(raw) {
  * @param {unknown} [legacyAutoUpdate]
  * @returns {'off'|'manual'|'auto'}
  */
-export function normalizePluginUpdateMode() {
+export function normalizePluginUpdateMode(mode, legacyAutoUpdate) {
+  const m = String(mode ?? '').trim().toLowerCase();
+  if (m === 'manual' || m === 'notify' || m === 'auto') return 'manual';
+  if (m === 'off') return 'off';
+  if (legacyAutoUpdate === true) return 'manual';
   return 'off';
 }
 

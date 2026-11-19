@@ -100,7 +100,7 @@ Clone https://github.com/Lavich99/antigravity-usage-monitor-th.git into ~/.gemin
 ## Safety & Privacy
 
 - **100% Local Processing**: All settings (`settings.json`) and usage caches stay strictly on your own machine under `~/.gemini/antigravity/sidecar_data/usage-monitor/panel/data/` (never inside the plugin repository).
-- **Zero External Telemetry or Auto-Update Network Calls**: Does not phone home to GitHub or external servers. Update anytime manually with:
+- **Zero Auto-Download & Optional Read-Only Release Notifier**: Offline by default (`pluginUpdateMode: 'off'`). You can optionally enable **Notify new releases (Read-Only)** in Settings, which only sends a read-only `GET` to `Lavich99/antigravity-usage-monitor-th/releases/latest` and never downloads or modifies files automatically. Update anytime manually with:
   ```powershell
   # Windows (PowerShell)
   git -C "$env:USERPROFILE\.gemini\config\plugins\usage-monitor" pull --ff-only
